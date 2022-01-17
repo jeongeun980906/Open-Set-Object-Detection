@@ -1,0 +1,6 @@
+_BASE_: "base.yaml"
+MODEL:
+  WEIGHTS: "./ckpt/MSRA/R-50.pkl"
+  MASK_ON: False
+  RESNETS:
+    DEPTH: 50
