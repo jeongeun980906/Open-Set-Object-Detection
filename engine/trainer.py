@@ -71,6 +71,7 @@ class SimpleTrainer():
             wandb.log(loss_dict)
         else:
             losses = sum(loss_dict.values())
+            # print(loss_dict)
             wandb.log(loss_dict)
             wandb.log({"total_loss":losses})
         """

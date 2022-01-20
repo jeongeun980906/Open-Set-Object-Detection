@@ -27,7 +27,7 @@ def launch(
     num_gpus_per_machine,
     num_machines=1,
     machine_rank=0,
-    dist_url=None,
+    dist_url='auto',
     args=(),
     timeout=DEFAULT_TIMEOUT,
 ):

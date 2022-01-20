@@ -196,6 +196,7 @@ _C.MODEL.ANCHOR_GENERATOR.OFFSET = 0.0
 # RPN options
 # ---------------------------------------------------------------------------- #
 _C.MODEL.RPN = CN()
+_C.MODEL.RPN.USE_MDN = False
 _C.MODEL.RPN.HEAD_NAME = "StandardRPNHead"  # used by RPN_HEAD_REGISTRY
 
 # Names of the input feature maps to be used by RPN

@@ -10,14 +10,17 @@ from structures.image_list import ImageList
 from structures.instances import Instances
 
 from utils.memory import retry_if_cuda_oom
-from model.rpn.utils import find_top_rpn_proposals
+from model.rpn.utils import find_top_rpn_proposals, find_top_rpn_proposals_uncertainty
 from ..anchor_generator import build_anchor_generator
 from ..matcher import Matcher,Matcher2
 from ..sampling import subsample_labels
 from ..box_regression import Box2BoxTransform,_dense_box_regression_loss
-from model.rpn.rpn_mdn import RPN_MDN,RPNHead_MDN
+from fvcore.nn import smooth_l1_loss
+from .mdn_loss import mdn_loss,find_logit,mdn_uncertainties
+from model.backbone.mdn import MixtureHead_CNN
 
-class RPNHead(nn.Module):
+
+class RPNHead_MDN(nn.Module):
     def __init__(self,in_channels,num_anchors,box_dim = 4,conv_dims = (-1,)):
         super().__init__()
         cur_channels = in_channels
@@ -30,7 +33,7 @@ class RPNHead(nn.Module):
             FPN network
             '''
             raise NotImplementedError
-        self.objectness = nn.Conv2d(cur_channels,num_anchors,kernel_size=1,stride=1)
+        self.objectness = MixtureHead_CNN(cur_channels,num_anchors)
         self.anchor_deltas = nn.Conv2d(cur_channels,num_anchors*box_dim,kernel_size=1,stride=1)
 
         # Weight Init
@@ -53,7 +56,7 @@ class RPNHead(nn.Module):
         Args:
             features list[Tensor] 
         Returns:
-            predicted objectness list[Tensor] 
+            predicted objectness list[Dict[Tensor]] 
             predicted anchor box deltas list[Tensor]
         '''
         pred_objectness = []
@@ -65,31 +68,7 @@ class RPNHead(nn.Module):
         return pred_objectness,pred_anchor_deltas
 
 
-def build_rpn_head(cfg, input_shape):
-    """
-    Build an RPN head defined by `cfg.MODEL.RPN.HEAD_NAME`.
-    """
-    # Standard RPN is shared across levels:
-    in_channels = [s.channels for s in input_shape]
-    assert len(set(in_channels)) == 1, "Each level must have the same channel!"
-    in_channels = in_channels[0]
-
-    # RPNHead should take the same input as anchor generator
-    # NOTE: it assumes that creating an anchor generator does not have unwanted side effect.
-    anchor_generator = build_anchor_generator(cfg, input_shape)
-    num_anchors = anchor_generator.num_anchors
-    box_dim = anchor_generator.box_dim
-    assert (
-        len(set(num_anchors)) == 1
-    ), "Each level must have the same number of anchors per spatial position"
-    num_anchors = num_anchors[0]
-    conv_dims = cfg.MODEL.RPN.CONV_DIMS
-    if cfg.MODEL.RPN.USE_MDN:
-        return RPNHead_MDN(in_channels=in_channels,num_anchors=num_anchors,box_dim=box_dim,conv_dims=conv_dims)
-    return RPNHead(in_channels=in_channels,num_anchors=num_anchors,box_dim=box_dim,conv_dims=conv_dims)
-
-
-class RPN(nn.Module):
+class RPN_MDN(nn.Module):
     def __init__(self,in_features:List[str], head:nn.Module
                     ,anchor_generator:nn.Module, anchor_matcher : Matcher,
                     box2box_transform: Box2BoxTransform,
@@ -143,11 +122,20 @@ class RPN(nn.Module):
         pred_objectness_logits, pred_anchor_deltas = self.head(features)
 
         # Transform
-        pred_objectness_logits = [
-            # (N, A, Hi, Wi) -> (N, Hi, Wi, A) -> (N, Hi*Wi*A)
-            score.permute(0, 2, 3, 1).flatten(1)
-            for score in pred_objectness_logits
-        ]
+        pred_objectness_logits = {'pi':[
+            # (N, K, A, Hi, Wi) -> (N, K, Hi, Wi, A) -> (N, K, Hi*Wi*A)
+            score['pi'].permute(0, 1, 3, 4, 2).flatten(2)
+            for score in pred_objectness_logits],
+            'mu':[
+                # (N, K, A, Hi, Wi) -> (N, K, Hi, Wi, A) -> (N, K, Hi*Wi*A)
+                score['mu'].permute(0, 1, 3, 4, 2).flatten(2)
+                for score in pred_objectness_logits],
+            'sigma':[
+                # (N, K, A, Hi, Wi) -> (N, K, Hi, Wi, A) -> (N, K, Hi*Wi*A)
+                score['sigma'].permute(0, 1, 3, 4, 2).flatten(2)
+                for score in pred_objectness_logits]
+
+        }
         pred_anchor_deltas = [
             # (N, A*B, Hi, Wi) -> (N, A, B, Hi, Wi) -> (N, Hi, Wi, A, B) -> (N, Hi*Wi*A, B)
             x.view(x.shape[0], -1, self.anchor_generator.box_dim, x.shape[-2], x.shape[-1])
@@ -156,9 +144,9 @@ class RPN(nn.Module):
             for x in pred_anchor_deltas
         ]
         if self.training:
-            gt_labels, gt_boxes = self.label_and_sample_anchors(anchors, gt_instances)
+            gt_labels,gt_targets,  gt_boxes = self.label_and_sample_anchors(anchors, gt_instances)
             losses = self.losses(
-                anchors, pred_objectness_logits, gt_labels, pred_anchor_deltas, gt_boxes
+                anchors, pred_objectness_logits, gt_labels,gt_targets, pred_anchor_deltas, gt_boxes
             )
         else:
             losses = {}
@@ -186,16 +174,17 @@ class RPN(nn.Module):
         del gt_instances
 
         gt_labels = []
+        gt_targets = []
         matched_gt_boxes = []
         for image_size_i, gt_boxes_i in zip(image_sizes, gt_boxes):
             match_quality_matrix = retry_if_cuda_oom(pairwise_iou)(gt_boxes_i, anchors)
-            matched_idxs, gt_labels_i = retry_if_cuda_oom(self.anchor_matcher)(match_quality_matrix) # [anchor h/16 w/16]
+            matched_idxs, gt_labels_i, gt_targets_i = retry_if_cuda_oom(self.anchor_matcher)(match_quality_matrix) # [anchor h/16 w/16]
+            gt_targets_i = gt_targets_i.to(device=gt_targets_i.device)
             gt_labels_i = gt_labels_i.to(device=gt_boxes_i.device)
             del match_quality_matrix
 
             # A vector of labels (-1, 0, 1) for each anchor
             gt_labels_i = self._subsample_labels(gt_labels_i)
-
             if len(gt_boxes_i) == 0:
                 # These values won't be used anyway since the anchor is labeled as background
                 matched_gt_boxes_i = torch.zeros_like(anchors.tensor)
@@ -204,8 +193,9 @@ class RPN(nn.Module):
                 matched_gt_boxes_i = gt_boxes_i[matched_idxs].tensor
 
             gt_labels.append(gt_labels_i)  # N,AHW
+            gt_targets.append(gt_targets_i)
             matched_gt_boxes.append(matched_gt_boxes_i)
-        return gt_labels, matched_gt_boxes
+        return gt_labels,gt_targets, matched_gt_boxes
 
     def _subsample_labels(self, label):
         """
@@ -227,12 +217,13 @@ class RPN(nn.Module):
     def losses(self,
         anchors: List[Boxes],
         pred_objectness_logits: List[torch.Tensor],
-        gt_labels: List[torch.Tensor],
+        gt_labels: List[torch.Tensor], gt_targets: List[torch.Tensor],
         pred_anchor_deltas: List[torch.Tensor],
         gt_boxes: List[torch.Tensor]):
 
         num_images = len(gt_labels)
         gt_labels = torch.stack(gt_labels)  # (N, sum(Hi*Wi*Ai))
+        gt_targets = torch.stack(gt_targets)  # (N, sum(Hi*Wi*Ai))
 
         # Log the number of positive/negative anchors per-image that's used in training
         pos_mask = gt_labels == 1
@@ -252,12 +243,19 @@ class RPN(nn.Module):
             smooth_l1_beta=self.smooth_l1_beta,
         )
 
-        valid_mask = gt_labels >= 0
-        objectness_loss = F.binary_cross_entropy_with_logits(
-            cat(pred_objectness_logits, dim=1)[valid_mask],
-            gt_labels[valid_mask].to(torch.float32),
-            reduction="sum",
-        )
+        valid_mask = gt_labels != -1
+        # prit((gt_targets[valid_mask]>0.7).sum())
+        # print( cat(pred_objectness_logits, dim=1)[valid_mask],gt_labels[valid_mask])
+        pred_objectness_logits = { key: cat(pred_objectness_logits[key],dim=2)
+                        for key in pred_objectness_logits}
+        # print(gt_labels.shape,pred_objectness_logits['pi'].shape)
+        # objectness_loss = smooth_l1_loss(
+        #     torch.sigmoid(cat(pred_objectness_logits, dim=1)[valid_mask]),
+        #     gt_targets[valid_mask].to(torch.float32),beta=self.smooth_l1_beta,
+        #     reduction="sum",
+        # )
+        objectness_loss = mdn_loss(pred_objectness_logits,valid_mask,
+                            gt_targets[valid_mask].to(torch.float32)).sum()
         normalizer = self.batch_size_per_image * num_images
         losses = {
             "loss_rpn_cls": objectness_loss / normalizer,
@@ -287,9 +285,29 @@ class RPN(nn.Module):
         # This approach ignores the derivative w.r.t. the proposal boxes’ coordinates that
         # are also network responses.
         with torch.no_grad():
+            pred_objectness_logits = find_logit(pred_objectness_logits)
             pred_proposals = self._decode_proposals(anchors, pred_anchor_deltas)
             return find_top_rpn_proposals(
                 pred_proposals,
+                pred_objectness_logits,
+                image_sizes,
+                self.nms_thresh,
+                self.pre_nms_topk[self.training],
+                self.post_nms_topk[self.training],
+                self.min_box_size,
+                self.training,
+            )
+
+    def predict_proposals_uncertainty(self,anchors: List[Boxes],
+        pred_objectness_logits: List[torch.Tensor],
+        pred_anchor_deltas: List[torch.Tensor],
+        image_sizes: List[Tuple[int, int]],):
+        with torch.no_grad():
+            objectness_uncertainty = mdn_uncertainties(pred_objectness_logits) # [N x total anchors]
+            pred_objectness_logits = find_logit(pred_objectness_logits)
+            pred_proposals = self._decode_proposals(anchors, pred_anchor_deltas)
+            return find_top_rpn_proposals_uncertainty(
+                pred_proposals, objectness_uncertainty,
                 pred_objectness_logits,
                 image_sizes,
                 self.nms_thresh,
@@ -318,52 +336,3 @@ class RPN(nn.Module):
             # Append feature map proposals with shape (N, Hi*Wi*A, B)
             proposals.append(proposals_i.view(N, -1, B))
         return proposals
-
-def build_proposal_genreator(cfg, input_shape):
-    """
-    Build a proposal generator
-    """
-    in_features = cfg.MODEL.RPN.IN_FEATURES
-    if cfg.MODEL.RPN.USE_MDN:
-        print("USE MDN")
-        return RPN_MDN(
-            in_features = in_features,
-        head = build_rpn_head(cfg, [input_shape[f] for f in in_features]),
-        anchor_generator =  build_anchor_generator(cfg, [input_shape[f] for f in in_features]),
-        anchor_matcher = Matcher2(
-                cfg.MODEL.RPN.IOU_THRESHOLDS, cfg.MODEL.RPN.IOU_LABELS, allow_low_quality_matches=True),
-        box2box_transform =  Box2BoxTransform(weights=cfg.MODEL.RPN.BBOX_REG_WEIGHTS),
-        batch_size_per_image= cfg.MODEL.RPN.BATCH_SIZE_PER_IMAGE,
-        positive_fraction = cfg.MODEL.RPN.POSITIVE_FRACTION,
-        pre_nms_topk= (cfg.MODEL.RPN.PRE_NMS_TOPK_TRAIN, cfg.MODEL.RPN.PRE_NMS_TOPK_TEST),
-        post_nms_topk = (cfg.MODEL.RPN.POST_NMS_TOPK_TRAIN, cfg.MODEL.RPN.POST_NMS_TOPK_TEST),
-        nms_thresh =  cfg.MODEL.RPN.NMS_THRESH,
-        min_box_size = cfg.MODEL.PROPOSAL_GENERATOR.MIN_SIZE,
-        anchor_boundary_thresh = cfg.MODEL.RPN.BOUNDARY_THRESH,
-        loss_weight= {
-                "loss_rpn_cls": cfg.MODEL.RPN.LOSS_WEIGHT,
-                "loss_rpn_loc": cfg.MODEL.RPN.BBOX_REG_LOSS_WEIGHT * cfg.MODEL.RPN.LOSS_WEIGHT,
-            },
-        box_reg_loss_type = cfg.MODEL.RPN.BBOX_REG_LOSS_TYPE,
-        smooth_l1_beta = cfg.MODEL.RPN.SMOOTH_L1_BETA
-    )
-    return RPN(in_features = in_features,
-        head = build_rpn_head(cfg, [input_shape[f] for f in in_features]),
-        anchor_generator =  build_anchor_generator(cfg, [input_shape[f] for f in in_features]),
-        anchor_matcher = Matcher(
-                cfg.MODEL.RPN.IOU_THRESHOLDS, cfg.MODEL.RPN.IOU_LABELS, allow_low_quality_matches=True),
-        box2box_transform =  Box2BoxTransform(weights=cfg.MODEL.RPN.BBOX_REG_WEIGHTS),
-        batch_size_per_image= cfg.MODEL.RPN.BATCH_SIZE_PER_IMAGE,
-        positive_fraction = cfg.MODEL.RPN.POSITIVE_FRACTION,
-        pre_nms_topk= (cfg.MODEL.RPN.PRE_NMS_TOPK_TRAIN, cfg.MODEL.RPN.PRE_NMS_TOPK_TEST),
-        post_nms_topk = (cfg.MODEL.RPN.POST_NMS_TOPK_TRAIN, cfg.MODEL.RPN.POST_NMS_TOPK_TEST),
-        nms_thresh =  cfg.MODEL.RPN.NMS_THRESH,
-        min_box_size = cfg.MODEL.PROPOSAL_GENERATOR.MIN_SIZE,
-        anchor_boundary_thresh = cfg.MODEL.RPN.BOUNDARY_THRESH,
-        loss_weight= {
-                "loss_rpn_cls": cfg.MODEL.RPN.LOSS_WEIGHT,
-                "loss_rpn_loc": cfg.MODEL.RPN.BBOX_REG_LOSS_WEIGHT * cfg.MODEL.RPN.LOSS_WEIGHT,
-            },
-        box_reg_loss_type = cfg.MODEL.RPN.BBOX_REG_LOSS_TYPE,
-        smooth_l1_beta = cfg.MODEL.RPN.SMOOTH_L1_BETA
-    )

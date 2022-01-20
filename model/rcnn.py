@@ -86,7 +86,7 @@ class GeneralizedRCNN(nn.Module):
         else:
             return results
 
-    def _postprocess(instances, batched_inputs: List[Dict[str, torch.Tensor]], image_sizes):
+    def _postprocess(self,instances, batched_inputs: List[Dict[str, torch.Tensor]], image_sizes):
         """
         Rescale the output instances to the target size.
         """

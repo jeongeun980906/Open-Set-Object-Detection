@@ -289,3 +289,79 @@ class FastRCNNOutputLayers(nn.Module):
             self.test_nms_thresh,
             self.test_topk_per_image,
         )
+    def predict_boxes_for_gt_classes(self, predictions, proposals):
+        """
+        Args:
+            predictions: return values of :meth:`forward()`.
+            proposals (list[Instances]): proposals that match the features that were used
+                to compute predictions. The fields ``proposal_boxes``, ``gt_classes`` are expected.
+        Returns:
+            list[Tensor]:
+                A list of Tensors of predicted boxes for GT classes in case of
+                class-specific box head. Element i of the list has shape (Ri, B), where Ri is
+                the number of proposals for image i and B is the box dimension (4 or 5)
+        """
+        if not len(proposals):
+            return []
+        scores, proposal_deltas = predictions
+        proposal_boxes = cat([p.proposal_boxes.tensor for p in proposals], dim=0)
+        N, B = proposal_boxes.shape
+        predict_boxes = self.box2box_transform.apply_deltas(
+            proposal_deltas, proposal_boxes
+        )  # Nx(KxB)
+
+        K = predict_boxes.shape[1] // B
+        if K > 1:
+            gt_classes = torch.cat([p.gt_classes for p in proposals], dim=0)
+            # Some proposals are ignored or have a background class. Their gt_classes
+            # cannot be used as index.
+            gt_classes = gt_classes.clamp_(0, K - 1)
+
+            predict_boxes = predict_boxes.view(N, K, B)[
+                torch.arange(N, dtype=torch.long, device=predict_boxes.device), gt_classes
+            ]
+        num_prop_per_image = [len(p) for p in proposals]
+        return predict_boxes.split(num_prop_per_image)
+
+    def predict_boxes(
+        self, predictions: Tuple[torch.Tensor, torch.Tensor], proposals: List[Instances]
+    ):
+        """
+        Args:
+            predictions: return values of :meth:`forward()`.
+            proposals (list[Instances]): proposals that match the features that were
+                used to compute predictions. The ``proposal_boxes`` field is expected.
+        Returns:
+            list[Tensor]:
+                A list of Tensors of predicted class-specific or class-agnostic boxes
+                for each image. Element i has shape (Ri, K * B) or (Ri, B), where Ri is
+                the number of proposals for image i and B is the box dimension (4 or 5)
+        """
+        if not len(proposals):
+            return []
+        _, proposal_deltas = predictions
+        num_prop_per_image = [len(p) for p in proposals]
+        proposal_boxes = cat([p.proposal_boxes.tensor for p in proposals], dim=0)
+        predict_boxes = self.box2box_transform.apply_deltas(
+            proposal_deltas,
+            proposal_boxes,
+        )  # Nx(KxB)
+        return predict_boxes.split(num_prop_per_image)
+
+    def predict_probs(
+        self, predictions: Tuple[torch.Tensor, torch.Tensor], proposals: List[Instances]
+    ):
+        """
+        Args:
+            predictions: return values of :meth:`forward()`.
+            proposals (list[Instances]): proposals that match the features that were
+                used to compute predictions.
+        Returns:
+            list[Tensor]:
+                A list of Tensors of predicted class probabilities for each image.
+                Element i has shape (Ri, K + 1), where Ri is the number of proposals for image i.
+        """
+        scores, _ = predictions
+        num_inst_per_image = [len(p) for p in proposals]
+        probs = F.softmax(scores, dim=-1)
+        return probs.split(num_inst_per_image, dim=0)
