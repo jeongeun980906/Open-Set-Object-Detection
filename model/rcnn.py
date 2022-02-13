@@ -10,6 +10,7 @@ from torch import nn
 from structures.image_list import ImageList
 from structures.instances import Instances
 from model.postprocess import detector_postprocess
+from layers.wrappers import cat
 
 class GeneralizedRCNN(nn.Module):
     def __init__(self,cfg,device='cuda'):
@@ -22,6 +23,7 @@ class GeneralizedRCNN(nn.Module):
         self.pixel_mean = torch.tensor(cfg.MODEL.PIXEL_MEAN).view(-1, 1, 1).to(device)
         self.pixel_std = torch.tensor(cfg.MODEL.PIXEL_STD).view(-1, 1, 1).to(device)
         self.device = device
+        self.auto_label_all = cfg.MODEL.RPN.AUTO_LABEL
 
     def forward(self,batched_inputs: List[Dict[str, torch.Tensor]]):
         if not self.training:
@@ -29,7 +31,10 @@ class GeneralizedRCNN(nn.Module):
         images = self.preprocess_image(batched_inputs)
         features = self.backbone(images.tensor)
         gt_instances = [x['instances'].to(self.device) for x in batched_inputs]
-        proposals, proposal_losses = self.proposal_generator(images, features, gt_instances)
+        if self.auto_label_all:
+            proposals, proposal_losses,gt_instances = self.proposal_generator(images, features, gt_instances)
+        else:
+            proposals, proposal_losses = self.proposal_generator(images, features, gt_instances)
         _, detector_losses = self.roi_heads(images, features, proposals, gt_instances)
 
         losses = {}
@@ -85,6 +90,26 @@ class GeneralizedRCNN(nn.Module):
             return self._postprocess(results, batched_inputs, images.image_sizes)
         else:
             return results
+    def feature_extract(
+        self,
+        batched_inputs: List[Dict[str, torch.Tensor]], 
+        do_postprocess: bool = True,
+    ):
+        assert not self.training
+
+        images = self.preprocess_image(batched_inputs)
+        features = self.backbone(images.tensor)
+
+        if self.proposal_generator is not None:
+            proposals, _ = self.proposal_generator(images, features, None)
+        else:
+            assert "proposals" in batched_inputs[0]
+            proposals = [x["proposals"].to(self.device) for x in batched_inputs]
+
+        box_features = self.roi_heads.extract_feature( features, proposals)
+        return box_features
+        
+
 
     def _postprocess(self,instances, batched_inputs: List[Dict[str, torch.Tensor]], image_sizes):
         """

@@ -11,7 +11,10 @@ from layers.wrappers import cat,nonzero_tuple,cross_entropy
 from model.box_regression import Box2BoxTransform, _dense_box_regression_loss
 from structures.box import Boxes
 from structures.instances import Instances
+from .postprocess import fast_rcnn_inference_f
 
+from eval.gmm import GaussianMixture
+from eval.maha import maha_distance
 
 def fast_rcnn_inference(
     boxes: List[torch.Tensor],
@@ -50,10 +53,10 @@ def fast_rcnn_inference(
         )
         for scores_per_image, boxes_per_image, image_shape in zip(scores, boxes, image_shapes)
     ]
-    return [x[0] for x in result_per_image], [x[1] for x in result_per_image]
+    return [x[0] for x in result_per_image] ,None, [x[1] for x in result_per_image]
 
 
-def _log_classification_stats(pred_logits, gt_classes, prefix="fast_rcnn"):
+def _log_classification_stats(pred_logits, gt_classes, log=True , auto_labeling=True):
     """
     Log the classification metrics to EventStorage.
     Args:
@@ -65,8 +68,18 @@ def _log_classification_stats(pred_logits, gt_classes, prefix="fast_rcnn"):
         return
     pred_classes = pred_logits.argmax(dim=1)
     bg_class_ind = pred_logits.shape[1] - 1
-
-    fg_inds = (gt_classes >= 0) & (gt_classes < bg_class_ind)
+    if auto_labeling:
+        fg_inds = (gt_classes >= 0) & (gt_classes < bg_class_ind-1)
+        unk_class_ind = bg_class_ind -1
+        unk_inds = gt_classes == unk_class_ind
+        num_unk = unk_inds.nonzero().numel()
+        unk_gt_classes = gt_classes[unk_inds]
+        unk_pred_classes = pred_classes[unk_inds]
+        unk_num_accurate = (unk_pred_classes == unk_gt_classes).nonzero().numel()
+        if num_unk == 0:
+            num_unk += 1
+    else:
+        fg_inds = (gt_classes >= 0) & (gt_classes < bg_class_ind)
     num_fg = fg_inds.nonzero().numel()
     fg_gt_classes = gt_classes[fg_inds]
     fg_pred_classes = pred_classes[fg_inds]
@@ -77,12 +90,19 @@ def _log_classification_stats(pred_logits, gt_classes, prefix="fast_rcnn"):
 
     # storage = get_event_storage()
     string = {'clss accuracy': num_accurate/num_instances}
-    wandb.log(string)
+    if log:
+        wandb.log(string)
     # storage.put_scalar(f"{prefix}/cls_accuracy", num_accurate / num_instances)
     if num_fg > 0:
-        log = {'fg_cls_accuracy' : fg_num_accurate / num_fg,
+        if auto_labeling:
+            string = {'fg_cls_accuracy' : fg_num_accurate / num_fg,
+                'false_negative' :  num_false_negative / num_fg,
+                'unk_cls_accuracy':unk_num_accurate/num_unk}
+        else:
+            string = {'fg_cls_accuracy' : fg_num_accurate / num_fg,
                 'false_negative' :  num_false_negative / num_fg}
-        wandb.log(log)
+        if log:
+            wandb.log(string)
         # storage.put_scalar(f"{prefix}/fg_cls_accuracy", fg_num_accurate / num_fg)
         # storage.put_scalar(f"{prefix}/false_negative", num_false_negative / num_fg)
 
@@ -180,7 +200,25 @@ class FastRCNNOutputLayers(nn.Module):
         if isinstance(loss_weight, float):
             loss_weight = {"loss_cls": loss_weight, "loss_box_reg": loss_weight}
         self.loss_weight = loss_weight
+        self.log = cfg.log
+        self.auto_labeling = cfg.MODEL.ROI_HEADS.AUTO_LABEL
+        self.rpn_auto_labeling = cfg.MODEL.RPN.AUTO_LABEL
+        self.feature_density = cfg.MODEL.ROI_BOX_HEAD.USE_FD
+        RPN_NAME = 'mdn' if cfg.MODEL.RPN.USE_MDN else 'base'
+        ROI_NAME = 'mln' if cfg.MODEL.ROI_HEADS.USE_MLN else 'base'
+        MODEL_NAME = RPN_NAME + ROI_NAME
+        self.path = './ckpt/{}/{}_{}.json'.format(cfg.MODEL.ROI_HEADS.AF,cfg.MODEL.SAVE_IDX,MODEL_NAME)
 
+    def load_gmm(self):
+        if self.feature_density and self.path != None:
+            self.gmm = GaussianMixture(n_components=21, n_features=2048, mu_init=None, var_init=None, eps=1.e-6).to('cuda')
+            self.gmm.load(self.path)
+
+    def load_maha(self):
+        if self.feature_density and self.path != None:
+            self.maha = maha_distance(21)
+            self.maha.load(self.path)
+            
     def forward(self, x):
         """
         Args:
@@ -214,7 +252,7 @@ class FastRCNNOutputLayers(nn.Module):
         gt_classes = (
             cat([p.gt_classes for p in proposals], dim=0) if len(proposals) else torch.empty(0)
         )
-        _log_classification_stats(scores, gt_classes)
+        _log_classification_stats(scores, gt_classes,self.log,self.auto_labeling+self.rpn_auto_labeling)
         # parse box regression outputs
         if len(proposals):
             proposal_boxes = cat([p.proposal_boxes.tensor for p in proposals], dim=0)  # Nx4
@@ -268,7 +306,8 @@ class FastRCNNOutputLayers(nn.Module):
 
         return loss_box_reg / max(gt_classes.numel(), 1.0)  # return 0 if empty
 
-    def inference(self, predictions: Tuple[torch.Tensor, torch.Tensor], proposals: List[Instances]):
+    def inference(self, predictions: Tuple[torch.Tensor, torch.Tensor], 
+                features: List[torch.Tensor], proposals: List[Instances]):
         """
         Args:
             predictions: return values of :meth:`forward()`.
@@ -281,14 +320,24 @@ class FastRCNNOutputLayers(nn.Module):
         boxes = self.predict_boxes(predictions, proposals)
         scores = self.predict_probs(predictions, proposals)
         image_shapes = [x.image_size for x in proposals]
-        return fast_rcnn_inference(
+        if self.feature_density:
+            return fast_rcnn_inference_f(
+            boxes,
+            scores,features,
+            image_shapes,
+            self.test_score_thresh,
+            self.test_nms_thresh,
+            self.test_topk_per_image, unk = True, module = self.maha
+            )
+        else:      
+            return fast_rcnn_inference(
             boxes,
             scores,
             image_shapes,
             self.test_score_thresh,
             self.test_nms_thresh,
             self.test_topk_per_image,
-        )
+            )
     def predict_boxes_for_gt_classes(self, predictions, proposals):
         """
         Args:

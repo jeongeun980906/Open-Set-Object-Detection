@@ -296,7 +296,9 @@ def add_ground_truth_to_proposals_single_image(
     gt_proposal = Instances(proposals.image_size, **gt.get_fields())
     gt_proposal.proposal_boxes = gt_boxes
     gt_proposal.objectness_logits = gt_logits
-
+    if 'alea' in proposals.get_fields().keys():
+        gt_proposal.alea = torch.zeros_like(gt_logits)
+        gt_proposal.epis = torch.zeros_like(gt_logits)
     for key in proposals.get_fields().keys():
         assert gt_proposal.has(
             key

@@ -1,6 +1,8 @@
 import torch
+from structures.instances import Instances
 
 from layers.wrappers import nonzero_tuple
+from model.roi_heads.unkown_sample import acquisition_function
 
 def subsample_labels(
     labels: torch.Tensor, num_samples: int, positive_fraction: float, bg_label: int
@@ -46,3 +48,45 @@ def subsample_labels(
     pos_idx = positive[perm1]
     neg_idx = negative[perm2]
     return pos_idx, neg_idx
+
+
+def subsample_labels_unknown(
+    labels: torch.Tensor, num_samples: int, proposals:Instances,
+         positive_fraction: float, bg_label: int, num_unk: int=5 , 
+         AF_TYPE: str='baseline'
+):
+    """
+    Returns:
+        positive, background, unknown sampled index
+    """
+    positive = nonzero_tuple((labels != -1) & (labels != bg_label))[0]
+    negative = nonzero_tuple(labels == bg_label)[0]
+    objectness_logits = proposals.objectness_logits[negative]
+    # print(objectness_logits.shape)
+    try:
+        unct = (proposals.epis[negative],proposals.alea[negative])
+    except:
+        unct = None
+    indicies_ukn = acquisition_function(objectness_logits,unct,num=num_unk,type=AF_TYPE)
+    sorted_indices_ukn = negative[indicies_ukn]
+    # print(sorted_indices_ukn)
+    mask = torch.ones_like(negative, dtype=torch.bool)
+    for s in indicies_ukn:
+        mask[s] = False
+    negative = negative[mask]
+
+    num_pos = int(num_samples * positive_fraction)
+    # protect against not enough positive examples
+    num_pos = min(positive.numel(), num_pos)
+    num_neg = num_samples - num_pos - num_unk
+    # protect against not enough negative examples
+    num_neg = min(negative.numel(), num_neg)
+
+    # randomly select positive and negative examples
+    perm1 = torch.randperm(positive.numel(), device=positive.device)[:num_pos]
+    perm2 = torch.randperm(negative.numel(), device=negative.device)[:num_neg]
+
+    pos_idx = positive[perm1]
+    neg_idx = negative[perm2]
+    # print(pos_idx,neg_idx)
+    return pos_idx, neg_idx , sorted_indices_ukn

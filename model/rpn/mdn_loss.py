@@ -66,6 +66,6 @@ def mdn_uncertainties(pred_objectness_logits):
     # entropy of pi
     entropy_pi  = -pi*torch.log(pi+1e-8)
     entropy_pi  = torch.sum(entropy_pi,1) #[N x D]
-    print(epis_unct.shape,alea_unct.shape)
+    # print(epis_unct.shape,alea_unct.shape)
     out = {'epis':epis_unct,'alea':alea_unct,'pi_entropy':entropy_pi}
     return out

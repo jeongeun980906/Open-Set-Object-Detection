@@ -26,7 +26,7 @@ class SimpleTrainer():
     or write your own training loop.
     """
 
-    def __init__(self, model, data_loader, optimizer):
+    def __init__(self, model, data_loader, optimizer , log = True):
         """
         Args:
             model: a torch Module. Takes a data from data_loader and returns a
@@ -45,6 +45,7 @@ class SimpleTrainer():
         model.train()
 
         self.model = model
+        self.log = log
         self.data_loader = data_loader
         self._data_loader_iter = iter(data_loader)
         self.optimizer = optimizer
@@ -68,12 +69,14 @@ class SimpleTrainer():
         if isinstance(loss_dict, torch.Tensor):
             losses = loss_dict
             loss_dict = {"total_loss": loss_dict}
-            wandb.log(loss_dict)
+            if self.log:
+                wandb.log(loss_dict)
         else:
             losses = sum(loss_dict.values())
             # print(loss_dict)
-            wandb.log(loss_dict)
-            wandb.log({"total_loss":losses})
+            if self.log:
+                wandb.log(loss_dict)
+                wandb.log({"total_loss":losses})
         """
         If you need to accumulate gradients or do something similar, you can
         wrap the optimizer with your custom `zero_grad()` method.

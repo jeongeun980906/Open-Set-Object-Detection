@@ -4,6 +4,8 @@ import numpy as np
 from typing import Dict, List, Optional, Tuple
 import torch
 from torch import nn
+import heapq
+import operator
 
 from structures.instances import Instances
 from structures.image_list import ImageList
@@ -12,12 +14,16 @@ from layers.shape_spec import ShapeSpec
 
 
 from ..backbone.resnet import BottleneckBlock, ResNet
-from .fast_rcnn import FastRCNNOutputLayers
+from .fast_rcnn import FastRCNNOutputLayers, fast_rcnn_inference
+from .fast_rcnn_mln import FastRCNNOutputLayers_MLN
 from .box_head import build_box_head
 from ..pooler import ROIPooler
 from ..matcher import Matcher
-from ..sampling import subsample_labels
+from ..sampling import subsample_labels, subsample_labels_unknown
 from model.rpn.utils import add_ground_truth_to_proposals
+from .postprocess import fast_rcnn_inference_f
+from layers.wrappers import cat
+# from model.roi_heads.unkown_sample import acquisition_function
 
 def build_roi_heads(cfg, input_shape):
     """
@@ -40,8 +46,13 @@ class ROIHeads(torch.nn.Module):
                 allow_low_quality_matches=False,
             )
         self.proposal_append_gt = True
+        self.auto_labeling = cfg.MODEL.ROI_HEADS.AUTO_LABEL
+        self.auto_labeling_rpn = cfg.MODEL.RPN.AUTO_LABEL
+        self.AF_TYPE = cfg.MODEL.ROI_HEADS.AF
+        self.MDN = cfg.MODEL.RPN.USE_MDN
+
     def _sample_proposals(self,matched_idxs: torch.Tensor, matched_labels: torch.Tensor, gt_classes: torch.Tensor
-                    ) -> Tuple[torch.Tensor, torch.Tensor]:
+                     ,proposal: torch.Tensor = None,) -> Tuple[torch.Tensor, torch.Tensor]:
         '''
         Args:
             matched_idxs : length N, best-matched gt index in [0,M) for each proposal
@@ -60,12 +71,39 @@ class ROIHeads(torch.nn.Module):
             gt_classes[matched_labels == -1] = -1
         else:
             gt_classes = torch.zeros_like(matched_idxs) + self.num_classes
-
-        sampled_fg_idxs, sampled_bg_idxs = subsample_labels(
+        if self.auto_labeling:
+            sampled_fg_idxs, sampled_bg_idxs , sampled_ukn_idxs = subsample_labels_unknown(
+            gt_classes, self.batch_size_per_image, proposal,
+                     self.positive_fraction, self.num_classes, 2, self.AF_TYPE)
+            gt_classes[sampled_ukn_idxs] = self.num_classes - 1
+            sampled_idxs = torch.cat([sampled_fg_idxs, sampled_bg_idxs,sampled_ukn_idxs], dim=0)
+        
+        else:
+            sampled_fg_idxs, sampled_bg_idxs = subsample_labels(
             gt_classes, self.batch_size_per_image, self.positive_fraction, self.num_classes
-        )
-
-        sampled_idxs = torch.cat([sampled_fg_idxs, sampled_bg_idxs], dim=0)
+                    )
+            sampled_idxs = torch.cat([sampled_fg_idxs, sampled_bg_idxs], dim=0)
+        # gt_classes_ss = gt_classes[sampled_idxs]
+        # if self.auto_labeling:
+        #     objectness_logits = proposal.objectness_logits
+        #     matched_labels_ss = matched_labels[sampled_idxs]
+        #     pred_objectness_score_ss = objectness_logits[sampled_idxs]
+        #     if self.MDN:
+        #         unct = (proposal.epis,proposal.alea)
+        #     else:
+        #         unct = None
+        #     # 1) Remove FG objectness score. 2) Sort and select top k. 3) Build and apply mask.
+        #     mask = torch.zeros((pred_objectness_score_ss.shape), dtype=torch.bool)
+        #     pred_objectness_score_ss[matched_labels_ss != 0] = -1 # only background
+        #     # sorted_indices = list(zip(
+        #     #     *heapq.nlargest(2, enumerate(pred_objectness_score_ss), key=operator.itemgetter(1))))[0]
+        #     # print(sorted_indices)
+        #     sorted_indices = acquisition_function(pred_objectness_score_ss,unct,type=self.AF_TYPE)
+        #     # print(sorted_indices)
+        #     for index in sorted_indices:
+        #         mask[index] = True
+        #     gt_classes_ss[mask] = self.num_classes - 1
+        # return sampled_idxs, gt_classes_ss
         return sampled_idxs, gt_classes[sampled_idxs]
 
     @torch.no_grad()
@@ -87,7 +125,9 @@ class ROIHeads(torch.nn.Module):
             matched_idxs, matched_labels = self.proposal_matcher(match_quality_matrix)
             sampled_idxs, gt_classes = self._sample_proposals(
                 matched_idxs, matched_labels, targets_per_image.gt_classes
+                , proposals_per_image
             )
+            # print((gt_classes==20).sum())
 
             # Set target attributes of the sampled proposals:
             proposals_per_image = proposals_per_image[sampled_idxs]
@@ -120,6 +160,7 @@ class ROIHeads(torch.nn.Module):
         #         'roi_head/num_bg_samples': np.mean(num_bg_samples)}
         # wandb.log(log)
         return proposals_with_gt
+
     def forward(
         self,
         images: ImageList,
@@ -175,9 +216,15 @@ class Res5ROIHeads(ROIHeads):
             pooler_type=pooler_type,
         )
         self.res5, out_channels = self._build_res5_block(cfg)
-        self.box_predictor = FastRCNNOutputLayers(
+        if cfg.MODEL.ROI_HEADS.USE_MLN:
+            self.box_predictor = FastRCNNOutputLayers_MLN(
             cfg, ShapeSpec(channels=out_channels, height=1, width=1)
-        )
+                )
+        else:
+            print("standard")
+            self.box_predictor = FastRCNNOutputLayers(
+            cfg, ShapeSpec(channels=out_channels, height=1, width=1)
+                )
 
     @classmethod
     def _build_res5_block(cls, cfg):
@@ -230,12 +277,16 @@ class Res5ROIHeads(ROIHeads):
         )
         predictions = self.box_predictor(box_features.mean(dim=[2, 3]))
 
+        features= box_features.mean(dim=[2, 3])
+        num_inst_per_image = [len(p) for p in proposals]
+        features = features.split(num_inst_per_image, dim=0)
+        
         if self.training:
             del features
             losses = self.box_predictor.losses(predictions, proposals)
             return [], losses
         else:
-            pred_instances, _ = self.box_predictor.inference(predictions, proposals)
+            pred_instances,_, _ = self.box_predictor.inference(predictions, features,proposals)
             pred_instances = self.forward_with_given_boxes(features, pred_instances)
             return pred_instances, {}
     
@@ -245,6 +296,36 @@ class Res5ROIHeads(ROIHeads):
         assert not self.training
         assert instances[0].has("pred_boxes") and instances[0].has("pred_classes")
         return instances
+    
+    def extract_feature(self,
+            features: Dict[str, torch.Tensor],
+            proposals: List[Instances]):
+        proposal_boxes = [x.proposal_boxes for x in proposals]
+        box_features = self._shared_roi_transform(
+            [features[f] for f in self.in_features], proposal_boxes
+        )
+        predictions = self.box_predictor(box_features.mean(dim=[2, 3]))
+        
+        features= box_features.mean(dim=[2, 3])
+        num_inst_per_image = [len(p) for p in proposals]
+        features = features.split(num_inst_per_image, dim=0)
+
+        boxes = self.box_predictor.predict_boxes(predictions, proposals)
+        scores = self.box_predictor.predict_probs(predictions, proposals)
+        image_shapes = [x.image_size for x in proposals]
+
+        _,feat,_ =  fast_rcnn_inference_f(
+            boxes,
+            scores,features,
+            image_shapes,
+            self.box_predictor.test_score_thresh,
+            self.box_predictor.test_nms_thresh,
+            self.box_predictor.test_topk_per_image,
+        )
+        res = cat(feat)
+        return res
+        # pred_instances, _ = self.box_predictor.inference(predictions, proposals)
+        # pred_instances = self.forward_with_given_boxes(features, pred_instances)
 
 class StandardROIHeads(ROIHeads):
     def __init__(self, cfg, backbone_shape):
@@ -327,3 +408,12 @@ class StandardROIHeads(ROIHeads):
         else:
             pred_instances, _ = self.box_predictor.inference(predictions, proposals)
             return pred_instances
+
+    def extract_feature(self,
+            features: Dict[str, torch.Tensor],
+            proposals: List[Instances]):
+        num_inst_per_image = [len(p) for p in proposals]
+        features = [features[f] for f in self.box_in_features]
+        box_features = self.pooler(features, [x.proposal_boxes for x in proposals])
+        box_features = self.box_head(box_features)
+        return box_features.split(num_inst_per_image, dim=0)

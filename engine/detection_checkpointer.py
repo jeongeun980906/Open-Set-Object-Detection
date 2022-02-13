@@ -6,8 +6,8 @@ import torch
 from fvcore.common.checkpoint import Checkpointer
 from torch.nn.parallel import DistributedDataParallel
 
-import utils.comm as comm
-from utils.file_io import PathManager
+import tools.comm as comm
+from tools.file_io import PathManager
 
 from .c2_model_loading import align_and_update_state_dicts
 

@@ -9,7 +9,7 @@ from structures.box import Boxes,pairwise_iou
 from structures.image_list import ImageList
 from structures.instances import Instances
 
-from utils.memory import retry_if_cuda_oom
+from tools.memory import retry_if_cuda_oom
 from model.rpn.utils import find_top_rpn_proposals, find_top_rpn_proposals_uncertainty
 from ..anchor_generator import build_anchor_generator
 from ..matcher import Matcher,Matcher2
@@ -81,7 +81,7 @@ class RPN_MDN(nn.Module):
                     anchor_boundary_thresh: float = -1.0,
                     loss_weight: Union[float, Dict[str, float]] = 1.0,
                     box_reg_loss_type: str = "smooth_l1",
-                    smooth_l1_beta: float = 0.0):
+                    smooth_l1_beta: float = 0.0 , log:bool=True):
 
         super().__init__()
         self.in_features = in_features # FPN ['p2','p3'...] resnet ['res4']
@@ -102,6 +102,7 @@ class RPN_MDN(nn.Module):
         self.loss_weight = loss_weight
         self.box_reg_loss_type = box_reg_loss_type
         self.smooth_l1_beta = smooth_l1_beta
+        self.log = log
 
     def forward(self,
             images: ImageList,
@@ -150,7 +151,7 @@ class RPN_MDN(nn.Module):
             )
         else:
             losses = {}
-        proposals = self.predict_proposals(
+        proposals = self.predict_proposals_uncertainty(
             anchors, pred_objectness_logits, pred_anchor_deltas, images.image_sizes
         )
         return proposals, losses
@@ -231,7 +232,8 @@ class RPN_MDN(nn.Module):
         num_neg_anchors = (gt_labels == 0).sum().item()
         log = {'num_pos_anchors': num_pos_anchors,
                 'num_neg_anchors': num_neg_anchors}
-        wandb.log(log)
+        if self.log:
+            wandb.log(log)
 
         localization_loss = _dense_box_regression_loss(
             anchors,

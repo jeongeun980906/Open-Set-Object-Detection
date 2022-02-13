@@ -9,7 +9,7 @@ from structures.box import Boxes,pairwise_iou
 from structures.image_list import ImageList
 from structures.instances import Instances
 
-from utils.memory import retry_if_cuda_oom
+from tools.memory import retry_if_cuda_oom
 from model.rpn.utils import find_top_rpn_proposals
 from ..anchor_generator import build_anchor_generator
 from ..matcher import Matcher,Matcher2
@@ -17,6 +17,9 @@ from ..sampling import subsample_labels
 from ..box_regression import Box2BoxTransform,_dense_box_regression_loss
 from model.rpn.rpn_mdn import RPN_MDN,RPNHead_MDN
 
+from model.ssl_score.score import autolabel
+from model.ssl_score.preprocess import open_candidate
+from model.ssl_score.append_gt import append_gt
 class RPNHead(nn.Module):
     def __init__(self,in_channels,num_anchors,box_dim = 4,conv_dims = (-1,)):
         super().__init__()
@@ -102,7 +105,9 @@ class RPN(nn.Module):
                     anchor_boundary_thresh: float = -1.0,
                     loss_weight: Union[float, Dict[str, float]] = 1.0,
                     box_reg_loss_type: str = "smooth_l1",
-                    smooth_l1_beta: float = 0.0):
+                    smooth_l1_beta: float = 0.0,
+                    auto_labeling: bool = False,
+                    log: bool = True):
 
         super().__init__()
         self.in_features = in_features # FPN ['p2','p3'...] resnet ['res4']
@@ -123,7 +128,13 @@ class RPN(nn.Module):
         self.loss_weight = loss_weight
         self.box_reg_loss_type = box_reg_loss_type
         self.smooth_l1_beta = smooth_l1_beta
-
+        self.log = log
+        self.auto_labeling  = auto_labeling
+        if auto_labeling:
+            self.SSL_MODEL = torch.hub.load('facebookresearch/dino:main', 'dino_vits8')
+            self.candidate_set = open_candidate()
+            self.auto_label_matcher = Matcher(
+                [0.3, 0.7],[0, -1, 1], allow_low_quality_matches=True)
     def forward(self,
             images: ImageList,
             features: Dict[str, torch.Tensor],
@@ -155,6 +166,13 @@ class RPN(nn.Module):
             .flatten(1, -2)
             for x in pred_anchor_deltas
         ]
+        proposals = self.predict_proposals(
+            anchors, pred_objectness_logits, pred_anchor_deltas, images.image_sizes
+        )
+        if self.auto_labeling:
+            with torch.no_grad():
+                label = autolabel(images,proposals,gt_instances,self.auto_label_matcher,self.SSL_MODEL,self.candidate_set)
+                gt_instances = append_gt(label,gt_instances)
         if self.training:
             gt_labels, gt_boxes = self.label_and_sample_anchors(anchors, gt_instances)
             losses = self.losses(
@@ -162,10 +180,10 @@ class RPN(nn.Module):
             )
         else:
             losses = {}
-        proposals = self.predict_proposals(
-            anchors, pred_objectness_logits, pred_anchor_deltas, images.image_sizes
-        )
-        return proposals, losses
+        if self.auto_labeling:
+            return proposals,losses,gt_instances
+        else:
+            return proposals, losses
 
     @torch.no_grad()
     def label_and_sample_anchors(
@@ -238,9 +256,10 @@ class RPN(nn.Module):
         pos_mask = gt_labels == 1
         num_pos_anchors = pos_mask.sum().item()
         num_neg_anchors = (gt_labels == 0).sum().item()
-        log = {'num_pos_anchors': num_pos_anchors,
+        string = {'num_pos_anchors': num_pos_anchors,
                 'num_neg_anchors': num_neg_anchors}
-        wandb.log(log)
+        if self.log:
+            wandb.log(string)
 
         localization_loss = _dense_box_regression_loss(
             anchors,
@@ -345,7 +364,7 @@ def build_proposal_genreator(cfg, input_shape):
                 "loss_rpn_loc": cfg.MODEL.RPN.BBOX_REG_LOSS_WEIGHT * cfg.MODEL.RPN.LOSS_WEIGHT,
             },
         box_reg_loss_type = cfg.MODEL.RPN.BBOX_REG_LOSS_TYPE,
-        smooth_l1_beta = cfg.MODEL.RPN.SMOOTH_L1_BETA
+        smooth_l1_beta = cfg.MODEL.RPN.SMOOTH_L1_BETA , log=cfg.log
     )
     return RPN(in_features = in_features,
         head = build_rpn_head(cfg, [input_shape[f] for f in in_features]),
@@ -365,5 +384,5 @@ def build_proposal_genreator(cfg, input_shape):
                 "loss_rpn_loc": cfg.MODEL.RPN.BBOX_REG_LOSS_WEIGHT * cfg.MODEL.RPN.LOSS_WEIGHT,
             },
         box_reg_loss_type = cfg.MODEL.RPN.BBOX_REG_LOSS_TYPE,
-        smooth_l1_beta = cfg.MODEL.RPN.SMOOTH_L1_BETA
+        smooth_l1_beta = cfg.MODEL.RPN.SMOOTH_L1_BETA , log=cfg.log, auto_labeling=cfg.MODEL.RPN.AUTO_LABEL
     )

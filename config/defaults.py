@@ -24,10 +24,12 @@ _C = CN()
 # The version number, to upgrade from old configs to new ones if any
 # changes happen. It's recommended to keep a VERSION in your config file.
 _C.VERSION = 2
+_C.log=True
 
 _C.MODEL = CN()
 _C.MODEL.LOAD_PROPOSALS = False
 _C.MODEL.MASK_ON = False
+_C.MODEL.SAVE_IDX = 1
 _C.MODEL.KEYPOINT_ON = False
 _C.MODEL.DEVICE = "cuda"
 _C.MODEL.META_ARCHITECTURE = "GeneralizedRCNN"
@@ -197,6 +199,7 @@ _C.MODEL.ANCHOR_GENERATOR.OFFSET = 0.0
 # ---------------------------------------------------------------------------- #
 _C.MODEL.RPN = CN()
 _C.MODEL.RPN.USE_MDN = False
+_C.MODEL.RPN.AUTO_LABEL = False
 _C.MODEL.RPN.HEAD_NAME = "StandardRPNHead"  # used by RPN_HEAD_REGISTRY
 
 # Names of the input feature maps to be used by RPN
@@ -244,11 +247,15 @@ _C.MODEL.RPN.POST_NMS_TOPK_TEST = 1000
 _C.MODEL.RPN.NMS_THRESH = 0.7
 # Set this to -1 to use the same number of output channels as input channels.
 _C.MODEL.RPN.CONV_DIMS = [-1]
-
 # ---------------------------------------------------------------------------- #
 # ROI HEADS options
 # ---------------------------------------------------------------------------- #
 _C.MODEL.ROI_HEADS = CN()
+
+_C.MODEL.ROI_HEADS.AUTO_LABEL = False
+_C.MODEL.ROI_HEADS.AF = 'baseline'
+_C.MODEL.ROI_HEADS.USE_MLN = False
+
 _C.MODEL.ROI_HEADS.NAME = "Res5ROIHeads"
 # Number of foreground classes
 _C.MODEL.ROI_HEADS.NUM_CLASSES = 80
@@ -291,6 +298,7 @@ _C.MODEL.ROI_BOX_HEAD = CN()
 # C4 don't use head name option
 # Options for non-C4 models: FastRCNNConvFCHead,
 _C.MODEL.ROI_BOX_HEAD.NAME = ""
+_C.MODEL.ROI_BOX_HEAD.USE_FD = False
 # Options are: "smooth_l1", "giou", "diou", "ciou"
 _C.MODEL.ROI_BOX_HEAD.BBOX_REG_LOSS_TYPE = "smooth_l1"
 # The final scaling coefficient on the box regression loss, used to balance the magnitude of its

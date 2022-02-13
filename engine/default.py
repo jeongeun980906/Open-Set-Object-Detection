@@ -8,7 +8,7 @@ from typing import Optional
 import torch
 from fvcore.nn.precise_bn import get_bn_modules
 from omegaconf import OmegaConf
-from utils.comm import *
+from tools.comm import *
 def default_setup(cfg, args):
     """
     Perform some basic common setups at the beginning of a job, including:
