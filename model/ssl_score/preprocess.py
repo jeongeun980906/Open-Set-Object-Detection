@@ -18,7 +18,13 @@ TF = tf.Compose([
                 tf.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
             ])
 
-def preprocess(image:torch.tensor,boxes:torch.tensor,gt_boxes:torch.tensor):
+TF_CLIP = tf.Compose([
+                tf.Resize((224,224), interpolation=tf.InterpolationMode.BICUBIC),
+                tf.CenterCrop(224),
+                tf.Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711)),
+            ])
+
+def preprocess(image:torch.tensor,boxes:torch.tensor,gt_boxes:torch.tensor,CLIP=False):
     '''
     erase gt boxes with 0
     Crop image + Pad + Resize to (256,256)
@@ -60,7 +66,10 @@ def preprocess(image:torch.tensor,boxes:torch.tensor,gt_boxes:torch.tensor):
         # plt.savefig('./dummy/proposals/crop.png')
         
         crop_image = F.pad(input=crop_image,pad = pad)/255
-        crop_image = TF(crop_image)
+        if CLIP:
+            crop_image = TF_CLIP(crop_image)
+        else:
+            crop_image = TF(crop_image)
         res.append(crop_image.unsqueeze(0))
     # print(res)
     res = cat(res)

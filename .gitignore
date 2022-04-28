@@ -1,0 +1,7 @@
+/ckpt/
+/dummy/
+/build/
+/faster_rcnn.egg-info/
+/wandb/
+/.vscode/
+.python-version

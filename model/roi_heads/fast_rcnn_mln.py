@@ -50,7 +50,8 @@ def fast_rcnn_inference(
     """
     result_per_image = [
         fast_rcnn_inference_single_image(
-            boxes_per_image, scores_per_image, epis_per_image, alea_per_image,image_shape, score_thresh, nms_thresh, topk_per_image , path
+            boxes_per_image, scores_per_image, epis_per_image, alea_per_image,image_shape, score_thresh, 
+                nms_thresh, topk_per_image , path
         )
         for scores_per_image, epis_per_image, alea_per_image, boxes_per_image, image_shape in zip(scores, epis_unct, alea_unct,boxes, image_shapes)
     ]
@@ -77,6 +78,8 @@ def _log_classification_stats(pred_logits, gt_classes, log=True , auto_labeling=
         unk_gt_classes = gt_classes[unk_inds]
         unk_pred_classes = pred_classes[unk_inds]
         unk_num_accurate = (unk_pred_classes == unk_gt_classes).nonzero().numel()
+        if num_unk == 0:
+            num_unk += 1
     else:
         fg_inds = (gt_classes >= 0) & (gt_classes < bg_class_ind)
     num_fg = fg_inds.nonzero().numel()
@@ -161,8 +164,8 @@ def fast_rcnn_inference_single_image(
     unct = epis + alea
     
     if path is not None:
-        pred_classes = filter_unct(filter_inds[:, 1],unct,path)
-
+        pred_classes = filter_unct(filter_inds[:, 1],unct,path,unct.device)
+    pred_classes = filter_inds[:, 1]
     result = Instances(image_shape)
     result.pred_boxes = Boxes(boxes)
     result.scores = scores
@@ -211,12 +214,15 @@ class FastRCNNOutputLayers_MLN(nn.Module):
         self.loss_weight = loss_weight
         self.log = cfg.log
         self.auto_labeling = cfg.MODEL.ROI_HEADS.AUTO_LABEL
+        self.rpn_auto_labeling = cfg.MODEL.RPN.AUTO_LABEL
 
         RPN_NAME = 'mdn' if cfg.MODEL.RPN.USE_MDN else 'base'
         ROI_NAME = 'mln' if cfg.MODEL.ROI_HEADS.USE_MLN else 'base'
         MODEL_NAME = RPN_NAME + ROI_NAME
-        self.path = './ckpt/{}/{}_{}.json'.format(cfg.MODEL.ROI_HEADS.AF,cfg.MODEL.SAVE_IDX,MODEL_NAME)
-
+        if cfg.MODEL.ROI_HEADS.UNCT:
+            self.path = '{}/ckpt/{}/{}_{}.json'.format(cfg.PATH,cfg.MODEL.ROI_HEADS.AF,cfg.MODEL.SAVE_IDX,MODEL_NAME)
+        else:
+            self.path = None
     def forward(self, x):
         """
         Args:
@@ -250,7 +256,7 @@ class FastRCNNOutputLayers_MLN(nn.Module):
         gt_classes = (
             cat([p.gt_classes for p in proposals], dim=0) if len(proposals) else torch.empty(0)
         )
-        _log_classification_stats(gather_scores, gt_classes,self.log,self.auto_labeling)
+        _log_classification_stats(gather_scores, gt_classes,self.log,self.auto_labeling+self.rpn_auto_labeling)
         # parse box regression outputs
         if len(proposals):
             proposal_boxes = cat([p.proposal_boxes.tensor for p in proposals], dim=0)  # Nx4
@@ -400,7 +406,7 @@ class FastRCNNOutputLayers_MLN(nn.Module):
         """
         scores, _ = predictions
         gather_scores = mln_gather(scores)
-        uncertainty = mln_uncertainties(scores['pi'],scores['mu'],scores['sigma'])
+        uncertainty = mln_uncertainties(scores['pi'],scores['mu'])
         epis = uncertainty['epis']
         alea = uncertainty['alea']
         num_inst_per_image = [len(p) for p in proposals]

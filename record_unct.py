@@ -32,7 +32,7 @@ from eval.maha import maha_distance
 # python -m torch.distributed.launch --nproc_per_node=4 train_voc.py
 
 def GAUSSIAN(cfg, save_id):
-    DIR_NAME = '/data/private/OWOD/datasets/VOC2007'
+    DIR_NAME = '/data/jeongeun/OWOD_datasets/VOC2007'
     split = 'train'
 
     """
@@ -45,9 +45,9 @@ def GAUSSIAN(cfg, save_id):
     # backbone = build_backbone(cfg)
     # head = Res5ROIHeads(cfg,backbone.output_shape())
     rcnn = GeneralizedRCNN(cfg).to('cuda')
-    state_dict = torch.load('./ckpt/{}/{}_{}_17500.pt'.format(cfg.MODEL.ROI_HEADS.AF,save_id,MODEL_NAME))
-    # state_dict = torch.load('./ckpt/uncertainty/1_mdn_17500.pt')
-    rcnn.load_state_dict(state_dict)
+    state_dict = torch.load('./ckpt/{}/{}_{}_15000.pt'.format(cfg.MODEL.ROI_HEADS.AF,save_id,MODEL_NAME),map_location='cuda')
+    pretrained_dict = {k: v for k, v in state_dict.items() if k in rcnn.state_dict()}
+    rcnn.load_state_dict(pretrained_dict)
     rcnn.eval()
     data = load_voc_instances(DIR_NAME,split,VOC_CLASS_NAMES)
     mapper = DatasetMapper(is_train=True, augmentations=build_augmentation(cfg,True))
@@ -87,7 +87,7 @@ def GAUSSIAN(cfg, save_id):
         json.dump(log, json_file)
 
 def feature_gmm(cfg,save_id):
-    DIR_NAME = '/data/private/OWOD/datasets/VOC2007'
+    DIR_NAME = '/data/jeongeun/OWOD_datasets/VOC2007'
     split = 'train'
 
     """
@@ -99,10 +99,10 @@ def feature_gmm(cfg,save_id):
     # default_setup(cfg, args)
     # backbone = build_backbone(cfg)
     # head = Res5ROIHeads(cfg,backbone.output_shape())
-    rcnn = GeneralizedRCNN(cfg).to('cuda')
-    state_dict = torch.load('./ckpt/{}/{}_{}_17500.pt'.format(cfg.MODEL.ROI_HEADS.AF,save_id,MODEL_NAME))
-    # state_dict = torch.load('./ckpt/uncertainty/mdn_17500.pt')
-    rcnn.load_state_dict(state_dict)
+    rcnn = GeneralizedRCNN(cfg,device='cuda').to('cuda')
+    state_dict = torch.load('./ckpt/{}/{}_{}_15000.pt'.format(cfg.MODEL.ROI_HEADS.AF,save_id,MODEL_NAME),map_location='cuda')
+    pretrained_dict = {k: v for k, v in state_dict.items() if k in rcnn.state_dict()}
+    rcnn.load_state_dict(pretrained_dict)
     rcnn.eval()
     data = load_voc_instances(DIR_NAME,split,VOC_CLASS_NAMES)
     mapper = DatasetMapper(is_train=True, augmentations=build_augmentation(cfg,True))
@@ -126,7 +126,7 @@ def feature_gmm(cfg,save_id):
 
 
 def feature_maha(cfg,save_id):
-    DIR_NAME = '/data/private/OWOD/datasets/VOC2007'
+    DIR_NAME = '/data/jeongeun/OWOD_datasets/VOC2007'
     split = 'train'
 
     """
@@ -139,7 +139,7 @@ def feature_maha(cfg,save_id):
     # backbone = build_backbone(cfg)
     # head = Res5ROIHeads(cfg,backbone.output_shape())
     rcnn = GeneralizedRCNN(cfg).to('cuda')
-    state_dict = torch.load('./ckpt/{}/{}_{}_17500.pt'.format(cfg.MODEL.ROI_HEADS.AF,save_id,MODEL_NAME))
+    state_dict = torch.load('./ckpt/{}/{}_{}_15000.pt'.format(cfg.MODEL.ROI_HEADS.AF,save_id,MODEL_NAME))
     # state_dict = torch.load('./ckpt/uncertainty/mdn_17500.pt')
     rcnn.load_state_dict(state_dict)
     rcnn.eval()
@@ -182,10 +182,11 @@ if __name__ == '__main__':
     cfg.MODEL.RPN.USE_MDN=1-args.base_rpn
     cfg.MODEL.ROI_HEADS.USE_MLN=1-args.base_roi
     cfg.MODEL.ROI_HEADS.NUM_CLASSES = 21
-    cfg.MODEL.ROI_HEADS.AUTO_LABEL = True
+    cfg.MODEL.ROI_HEADS.AUTO_LABEL = False
     cfg.log = args.log
     cfg.MODEL.ROI_HEADS.AF = args.af
-    cfg.MODEL.ROI_BOX_HEAD.USE_FD = True
+    cfg.MODEL.ROI_BOX_HEAD.USE_FD = False
+    cfg.MODEL.RPN.AUTO_LABEL_TYPE = None
     # cfg.merge_from_list(args.opts)
     RPN_NAME = 'mdn' if cfg.MODEL.RPN.USE_MDN else 'base'
     ROI_NAME = 'mln' if cfg.MODEL.ROI_HEADS.USE_MLN else 'base'

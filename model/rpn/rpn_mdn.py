@@ -9,7 +9,7 @@ from structures.box import Boxes,pairwise_iou
 from structures.image_list import ImageList
 from structures.instances import Instances
 
-from tools.memory import retry_if_cuda_oom
+from tools_det.memory import retry_if_cuda_oom
 from model.rpn.utils import find_top_rpn_proposals, find_top_rpn_proposals_uncertainty
 from ..anchor_generator import build_anchor_generator
 from ..matcher import Matcher,Matcher2
@@ -19,6 +19,9 @@ from fvcore.nn import smooth_l1_loss
 from .mdn_loss import mdn_loss,find_logit,mdn_uncertainties
 from model.backbone.mdn import MixtureHead_CNN
 
+from model.ssl_score.dino_score import autolabel_dino
+from model.ssl_score.preprocess import open_candidate
+from model.ssl_score.append_gt import append_gt
 
 class RPNHead_MDN(nn.Module):
     def __init__(self,in_channels,num_anchors,box_dim = 4,conv_dims = (-1,)):
@@ -81,7 +84,9 @@ class RPN_MDN(nn.Module):
                     anchor_boundary_thresh: float = -1.0,
                     loss_weight: Union[float, Dict[str, float]] = 1.0,
                     box_reg_loss_type: str = "smooth_l1",
-                    smooth_l1_beta: float = 0.0 , log:bool=True):
+                    smooth_l1_beta: float = 0.0 ,auto_labeling: bool = False,
+                    auto_label_type: str = 'mul',
+                    log:bool=True):
 
         super().__init__()
         self.in_features = in_features # FPN ['p2','p3'...] resnet ['res4']
@@ -103,6 +108,13 @@ class RPN_MDN(nn.Module):
         self.box_reg_loss_type = box_reg_loss_type
         self.smooth_l1_beta = smooth_l1_beta
         self.log = log
+        self.auto_labeling  = auto_labeling
+        if auto_labeling:
+            self.auto_labeling_type = auto_label_type
+            self.MODEL = torch.hub.load('facebookresearch/dino:main', 'dino_vits8')
+            self.candidate_set = open_candidate()
+            self.auto_label_matcher = Matcher(
+                [0.3, 0.7],[0, -1, 1], allow_low_quality_matches=False)
 
     def forward(self,
             images: ImageList,
@@ -144,6 +156,15 @@ class RPN_MDN(nn.Module):
             .flatten(1, -2)
             for x in pred_anchor_deltas
         ]
+        
+        proposals = self.predict_proposals_uncertainty(
+            anchors, pred_objectness_logits, pred_anchor_deltas, images.image_sizes
+        )
+        if self.auto_labeling:
+            with torch.no_grad():
+                label = autolabel_dino(images,proposals,gt_instances,self.auto_label_matcher
+                        ,self.MODEL,self.candidate_set,score_type = self.auto_labeling_type)
+                gt_instances = append_gt(label,gt_instances)
         if self.training:
             gt_labels,gt_targets,  gt_boxes = self.label_and_sample_anchors(anchors, gt_instances)
             losses = self.losses(
@@ -151,10 +172,11 @@ class RPN_MDN(nn.Module):
             )
         else:
             losses = {}
-        proposals = self.predict_proposals_uncertainty(
-            anchors, pred_objectness_logits, pred_anchor_deltas, images.image_sizes
-        )
-        return proposals, losses
+
+        if self.auto_labeling:
+            return proposals,losses,gt_instances
+        else:
+            return proposals, losses
 
     @torch.no_grad()
     def label_and_sample_anchors(

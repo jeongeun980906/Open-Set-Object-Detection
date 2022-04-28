@@ -8,7 +8,7 @@ from typing import List, Tuple, Union
 
 # from data import DatasetCatalog, MetadataCatalog
 from structures.box import BoxMode
-from utils.file_io import PathManager
+from tools_det.fileio import PathManager
 
 __all__ = ["load_voc_instances", "register_pascal_voc"]
 

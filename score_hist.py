@@ -1,3 +1,4 @@
+from model.ssl_score.obj import simple_cnn
 from config.config import get_cfg
 from model.rcnn import GeneralizedRCNN
 import torch
@@ -21,31 +22,36 @@ from layers.wrappers import nonzero_tuple
 
 from structures.box import Boxes,pairwise_iou
 from layers.wrappers import cat
-from tools.memory import retry_if_cuda_oom
+from tools_det.memory import retry_if_cuda_oom
 from model.sampling import subsample_labels
 
 from model.ssl_score.preprocess import preprocess,open_candidate
-from model.ssl_score.score import cosine_distance_torch
+from model.ssl_score.dino_score import cosine_distance_torch,save_images
 import random
 
 cfg = get_cfg()
 cfg.merge_from_file('./config_files/voc.yaml')
 cfg.MODEL.ROI_HEADS.NUM_CLASSES = 20
 cfg.MODEL.ROI_HEADS.USE_MLN = False
-torch.cuda.set_device(0)
+cfg.MODEL.RPN.AUTO_LABEL = False
+torch.cuda.set_device(1)
 print(torch.cuda.current_device())
 
 
-DIR_NAME = '/data/private/OWOD/datasets/VOC2007'
+DIR_NAME = '/data/jeongeun/OWOD_datasets/VOC2007'
 data = load_voc_instances(DIR_NAME,'test',VOC_CLASS_NAMES,phase=None,COCO_CLASS=True)
 data = data[::50]
 print(len(data))
 mapper = DatasetMapper(is_train=True, augmentations=build_augmentation(cfg,False))
 data_loader = build_detection_test_loader(data,mapper=mapper,batch_size=1)
 
-device_vit = 'cuda:1'
-referenec_set = open_candidate().to('cuda')
+device_vit = 'cuda:2'
+referenec_set = open_candidate()[0].to('cuda')
 vit = torch.hub.load('facebookresearch/dino:main', 'dino_vits8').to(device_vit)
+# obj_model = simple_cnn(y_dim=1).to('cuda')
+# obj_state_dict = torch.load('./ckpt/obj_model.pt')
+# obj_model.load_state_dict(obj_state_dict)
+# obj_model.eval()
 
 EPOCHS = [5000]#[2000*(i+1) for i in range(8)]
 for e in EPOCHS:
@@ -73,6 +79,13 @@ for e in EPOCHS:
         'background': [],
         'ignore': []
     }
+
+    # cnn_score = {
+    #     'known': [],
+    #     'unknown': [],
+    #     'background': [],
+    #     'ignore': []
+    # }
 
 
     def clip(tensor,box_size):
@@ -165,46 +178,58 @@ for e in EPOCHS:
             ## Scoring
             if pos_idx.shape[0] != 0:
                 positive_patch = preprocess(images[i],positive_boxes,None)
+                # save_images(positive_patch,None,1)
                 feat = vit(positive_patch.to(device_vit)).detach().to('cuda')
+                # pos_obj = torch.sigmoid(obj_model(positive_patch.to('cuda')))[:,0].detach()
                 pos_cos_sim = cosine_distance_torch(referenec_set,feat)
                 pos_total_score = positive_scores.to('cuda')*pos_cos_sim
 
                 dino_score['known'] += pos_cos_sim.cpu().numpy().tolist()
                 obj_score['known'] += positive_scores.cpu().numpy().tolist()
                 total_score['known'] += pos_total_score.cpu().numpy().tolist()
-                print(torch.mean(pos_total_score))
+                # cnn_score['known'] += pos_obj.cpu().numpy().tolist()
+
             if unk_idx.shape[0] != 0:
                 unk_patch = preprocess(images[i],unk_boxes,None)
                 feat = vit(unk_patch.to(device_vit)).detach().to('cuda')
+                # unk_obj = torch.sigmoid(obj_model(unk_patch.to('cuda')))[:,0].detach()
                 unk_cos_sim = cosine_distance_torch(referenec_set,feat)
-                unk_total_score =unk_scores.to('cuda')*unk_cos_sim
+                unk_total_score =  unk_scores.to('cuda')*unk_cos_sim
 
                 dino_score['unknown'] += unk_cos_sim.cpu().numpy().tolist()
                 obj_score['unknown'] += unk_scores.cpu().numpy().tolist()
                 total_score['unknown'] += unk_total_score.cpu().numpy().tolist()
+                # cnn_score['unknown'] += unk_obj.cpu().numpy().tolist()
+                # print(torch.mean(unk_scores))
                 print(torch.mean(unk_total_score))
 
             if neg_idx.shape[0] != 0:
                 neg_patch = preprocess(images[i],neg_boxes,None)
+                save_images(neg_patch,None,2)
                 feat = vit(neg_patch.to(device_vit)).detach().to('cuda')
+                # neg_obj = torch.sigmoid(obj_model(neg_patch.to('cuda')))[:,0].detach()
                 neg_cos_sim = cosine_distance_torch(referenec_set,feat)
-                neg_total_score =neg_scores.to('cuda')*neg_cos_sim
+                neg_total_score = neg_scores.to('cuda')*neg_cos_sim
 
                 dino_score['background'] += neg_cos_sim.cpu().numpy().tolist()
                 obj_score['background'] += neg_scores.cpu().numpy().tolist()
                 total_score['background'] += neg_total_score.cpu().numpy().tolist()
+                # cnn_score['background'] += neg_obj.cpu().numpy().tolist()
+                # print(torch.mean(neg_scores))
                 print(torch.mean(neg_total_score))
             
             if ignore_idx.shape[0] != 0:
                 ign_patch = preprocess(images[i],ign_boxes,None)
                 feat = vit(ign_patch.to(device_vit)).detach().to('cuda')
+                # ign_obj = torch.sigmoid(obj_model(ign_patch.to('cuda')))[:,0].detach()
                 ign_cos_sim = cosine_distance_torch(referenec_set,feat)
-                ign_total_score =ign_scores.to('cuda')*ign_cos_sim
+                ign_total_score = ign_scores.to('cuda')*ign_cos_sim
 
                 dino_score['ignore'] += ign_cos_sim.cpu().numpy().tolist()
                 obj_score['ignore'] += ign_scores.cpu().numpy().tolist()
                 total_score['ignore'] += ign_total_score.cpu().numpy().tolist()
-                print(torch.mean(ign_total_score))
+                # cnn_score['ignore'] += ign_obj.cpu().numpy().tolist()
+                # print(torch.mean(ign_total_score))
 
     NUM_SAMPLES = 500
     plt.figure()
@@ -242,3 +267,15 @@ for e in EPOCHS:
     plt.ylim((0,100))
     plt.legend()
     plt.savefig('./dummy/hist/total_score_{}.png'.format(e))
+
+    # plt.figure()
+    # for key in cnn_score:
+    #     samples = random.choices(cnn_score[key],k=NUM_SAMPLES)
+    #     counts, bins = np.histogram(samples,bins=40)
+    #     if key == 'ignore':
+    #         plt.hist(bins[:-1], bins, weights=counts, alpha=0.2,label = key)
+    #     else:
+    #         plt.hist(bins[:-1], bins, weights=counts, alpha=0.5,label = key)
+    # plt.ylim((0,100))
+    # plt.legend()
+    # plt.savefig('./dummy/hist/cnn_score_{}.png'.format(e))

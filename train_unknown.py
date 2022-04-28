@@ -27,8 +27,8 @@ from data.utils import build_augmentation
 
 # python -m torch.distributed.launch --nproc_per_node=4 train_voc.py
 
-def main(cfg, phase):
-    DIR_NAME = '/data/private/OWOD/datasets/VOC2007'
+def main(cfg, phase,args):
+    DIR_NAME = '/data/jeongeun/OWOD_datasets/VOC2007'
     split = 'train'
     if phase == None:
         CLASS_NAME = COCO_CLASS_NAMES
@@ -53,7 +53,7 @@ def main(cfg, phase):
     checkpointer.resume_or_load(cfg.MODEL.WEIGHTS, resume=True)
     rcnn = checkpointer.model
     if cfg.MODEL.RPN.AUTO_LABEL:
-        rcnn.proposal_generator.SSL_MODEL.to('cuda:3')
+        rcnn.proposal_generator.MODEL.to(args.gpu_vit)
     data = load_voc_instances(DIR_NAME,split,CLASS_NAME,phase,use_coco)
     mapper = DatasetMapper(is_train=True, augmentations=build_augmentation(cfg,True))
     data_loader = build_detection_train_loader(data,mapper=mapper,total_batch_size=8)
@@ -67,10 +67,12 @@ def main(cfg, phase):
         # print(i)
         trainer.run_step()
         schedular.step()
-        if i%500==0:
+        if i%500 == 0:
+            print(i)
+        if i%5000==0:
             print(i)
             torch.save(trainer.model.state_dict(),'./ckpt/{}/{}_{}_{}.pt'.format(cfg.MODEL.ROI_HEADS.AF,cfg.MODEL.SAVE_IDX,MODEL_NAME,i))
-
+    torch.save(trainer.model.state_dict(),'./ckpt/{}/{}_{}_{}.pt'.format(cfg.MODEL.ROI_HEADS.AF,cfg.MODEL.SAVE_IDX,MODEL_NAME,i))
     # rcnn.eval()
     # data = load_voc_instances(DIR_NAME,'test',VOC_CLASS_NAMES)
     # mapper = DatasetMapper(is_train=False, augmentations=build_augmentation(cfg,False))
@@ -81,13 +83,15 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--id', type=int,default=1,help='save index')
     parser.add_argument('--gpu', type=int,default=0,help='gpu index')
-    parser.add_argument('--af', type=str,default='baseline',help='acquisition function',
-                choices=["baseline", "uncertainty"])
+    parser.add_argument('--gpu_vit', type=int,default=1,help='gpu index')
+    parser.add_argument('--af', type=str,default='mul',help='acquisition function',
+                choices=["sum", "mul"])
     parser.add_argument('--auto_label_all', action='store_true', default=False,help='Auto Labeling for both RPN and ROI head')
     parser.add_argument('--auto_label', action='store_true', default=False,help='Auto Labeling for only ROI_HEAD')
     parser.add_argument('--all', action='store_true', default=False,help='All task training')
     parser.add_argument('--base_rpn', action='store_true', default=False,help='use mdn for RPN')
     parser.add_argument('--base_roi', action='store_true', default=False,help='use mln for ROIHEAD')
+    parser.add_argument('--CLIP', action='store_true', default=False,help='use CLIP')
     parser.add_argument('--log', action='store_true', default=False,help='use wandb')
     args = parser.parse_args()
     
@@ -103,7 +107,10 @@ if __name__ == '__main__':
     cfg.MODEL.RPN.AUTO_LABEL = args.auto_label_all
     cfg.MODEL.ROI_HEADS.AUTO_LABEL = args.auto_label
     cfg.log = args.log
-    cfg.MODEL.ROI_HEADS.AF = args.af
+    cfg.gpu_vit = "cuda:{}".format(args.gpu_vit)
+    cfg.MODEL.RPN.USE_CLIP = args.CLIP
+    cfg.MODEL.RPN.AUTO_LABEL_TYPE = args.af
+
     if phase == None:
         NUM_CLASSES = 80
     else: 
@@ -119,4 +126,4 @@ if __name__ == '__main__':
     cfg.freeze()
     if args.log:
         wandb.init(config=cfg,tags= str(args.id),name = '{}_{}_{}'.format(args.id, cfg.MODEL.ROI_HEADS.AF,MODEL_NAME),project='faster rcnn')
-    main(cfg,phase)
+    main(cfg,phase,args)

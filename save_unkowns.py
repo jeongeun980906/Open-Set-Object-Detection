@@ -64,7 +64,7 @@ MODEL_NAME = RPN_NAME + ROI_NAME
 cfg.freeze()
 # wandb.init(config=cfg,tags= 'temp',name = 'temp',project='temp')
 
-DIR_NAME = '/data/private/OWOD/datasets/VOC2007'
+DIR_NAME = '/data/jeongeun/OWOD_datasets/VOC2007'
 split = 'train'
 rcnn = GeneralizedRCNN(cfg).to('cuda')
 state_dict = torch.load('./ckpt/{}/{}_{}_17500.pt'.format(cfg.MODEL.ROI_HEADS.AF,args.id,MODEL_NAME))

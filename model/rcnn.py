@@ -12,6 +12,9 @@ from structures.instances import Instances
 from model.postprocess import detector_postprocess
 from layers.wrappers import cat
 
+from model.ssl_score.preprocess import preprocess,open_candidate
+from model.ssl_score.dino_score import cosine_distance_torch
+
 class GeneralizedRCNN(nn.Module):
     def __init__(self,cfg,device='cuda'):
         super().__init__()
@@ -24,6 +27,13 @@ class GeneralizedRCNN(nn.Module):
         self.pixel_std = torch.tensor(cfg.MODEL.PIXEL_STD).view(-1, 1, 1).to(device)
         self.device = device
         self.auto_label_all = cfg.MODEL.RPN.AUTO_LABEL
+        self.use_ssl = False
+    
+    def load_ssl(self, device_vit):
+        self.device_vit = device_vit
+        self.referenec_set = open_candidate()[0].to('cuda')
+        self.ssl = torch.hub.load('facebookresearch/dino:main', 'dino_vits8').to(self.device_vit)
+        self.use_ssl = True
 
     def forward(self,batched_inputs: List[Dict[str, torch.Tensor]]):
         if not self.training:
@@ -85,7 +95,17 @@ class GeneralizedRCNN(nn.Module):
         else:
             detected_instances = [x.to(self.device) for x in detected_instances]
             results = self.roi_heads.forward_with_given_boxes(features, detected_instances)
-
+        if self.use_ssl:
+            for image, res in zip(images,results):
+                if res.pred_boxes.tensor.shape[0] != 0:
+                    patches = preprocess(image,res.pred_boxes.tensor,None)
+                    feat = self.ssl(patches.to(self.device_vit)).detach().to('cuda')
+                    cos_sim = cosine_distance_torch(self.referenec_set,feat)
+                    unk = torch.where(cos_sim<0.4)[0]
+                    res.pred_classes[unk]=20
+        # else:
+        #     # print(results)
+        #     # print(results)
         if do_postprocess:
             return self._postprocess(results, batched_inputs, images.image_sizes)
         else:

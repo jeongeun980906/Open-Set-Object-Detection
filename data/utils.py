@@ -17,7 +17,7 @@ from structures.box import (
     BoxMode
 )
 from structures.instances import Instances
-from utils.file_io import PathManager
+from tools_det.fileio import PathManager
 
 from . import transforms as T
 # from .catalog import MetadataCatalog

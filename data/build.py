@@ -8,9 +8,9 @@ from typing import Any, Callable, Dict, List, Optional, Union
 import torch
 import torch.utils.data as torchdata
 
-from utils.comm import get_world_size
-from utils.env import seed_all_rng
-from utils.file_io import PathManager
+from tools_det.comm import get_world_size
+from tools_det.env import seed_all_rng
+from tools_det.fileio import PathManager
 
 from data.common import AspectRatioGroupedDataset, DatasetFromList, MapDataset, ToIterableDataset
 from data.samplers import (
@@ -200,7 +200,7 @@ def build_detection_test_loader(
         sampler=sampler,
         drop_last=False,
         num_workers=num_workers,
-        collate_fn=trivial_batch_collator if collate_fn is None else collate_fn,
+        collate_fn=trivial_batch_collator if collate_fn is None else collate_fn
     )
 
 

@@ -11,7 +11,6 @@ from layers.wrappers import cat,nonzero_tuple,cross_entropy
 from model.box_regression import Box2BoxTransform, _dense_box_regression_loss
 from structures.box import Boxes
 from structures.instances import Instances
-from .postprocess import fast_rcnn_inference_f
 
 from eval.gmm import GaussianMixture
 from eval.maha import maha_distance
@@ -53,7 +52,7 @@ def fast_rcnn_inference(
         )
         for scores_per_image, boxes_per_image, image_shape in zip(scores, boxes, image_shapes)
     ]
-    return [x[0] for x in result_per_image] ,None, [x[1] for x in result_per_image]
+    return [x[0] for x in result_per_image] , [x[1] for x in result_per_image]
 
 
 def _log_classification_stats(pred_logits, gt_classes, log=True , auto_labeling=True):
@@ -208,16 +207,6 @@ class FastRCNNOutputLayers(nn.Module):
         ROI_NAME = 'mln' if cfg.MODEL.ROI_HEADS.USE_MLN else 'base'
         MODEL_NAME = RPN_NAME + ROI_NAME
         self.path = './ckpt/{}/{}_{}.json'.format(cfg.MODEL.ROI_HEADS.AF,cfg.MODEL.SAVE_IDX,MODEL_NAME)
-
-    def load_gmm(self):
-        if self.feature_density and self.path != None:
-            self.gmm = GaussianMixture(n_components=21, n_features=2048, mu_init=None, var_init=None, eps=1.e-6).to('cuda')
-            self.gmm.load(self.path)
-
-    def load_maha(self):
-        if self.feature_density and self.path != None:
-            self.maha = maha_distance(21)
-            self.maha.load(self.path)
             
     def forward(self, x):
         """
@@ -306,8 +295,7 @@ class FastRCNNOutputLayers(nn.Module):
 
         return loss_box_reg / max(gt_classes.numel(), 1.0)  # return 0 if empty
 
-    def inference(self, predictions: Tuple[torch.Tensor, torch.Tensor], 
-                features: List[torch.Tensor], proposals: List[Instances]):
+    def inference(self, predictions: Tuple[torch.Tensor, torch.Tensor], proposals: List[Instances]):
         """
         Args:
             predictions: return values of :meth:`forward()`.
@@ -320,24 +308,15 @@ class FastRCNNOutputLayers(nn.Module):
         boxes = self.predict_boxes(predictions, proposals)
         scores = self.predict_probs(predictions, proposals)
         image_shapes = [x.image_size for x in proposals]
-        if self.feature_density:
-            return fast_rcnn_inference_f(
-            boxes,
-            scores,features,
-            image_shapes,
-            self.test_score_thresh,
-            self.test_nms_thresh,
-            self.test_topk_per_image, unk = True, module = self.maha
-            )
-        else:      
-            return fast_rcnn_inference(
-            boxes,
-            scores,
-            image_shapes,
-            self.test_score_thresh,
-            self.test_nms_thresh,
-            self.test_topk_per_image,
-            )
+  
+        return fast_rcnn_inference(
+        boxes,
+        scores,
+        image_shapes,
+        self.test_score_thresh,
+        self.test_nms_thresh,
+        self.test_topk_per_image,
+        )
     def predict_boxes_for_gt_classes(self, predictions, proposals):
         """
         Args:

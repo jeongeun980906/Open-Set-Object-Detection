@@ -8,7 +8,7 @@ import random
 import torch.utils.data as data
 from torch.utils.data.sampler import Sampler
 
-from utils.serialize import PicklableWrapper
+from tools_det.serialize import PicklableWrapper
 
 __all__ = ["MapDataset", "DatasetFromList", "AspectRatioGroupedDataset", "ToIterableDataset"]
 

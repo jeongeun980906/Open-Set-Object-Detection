@@ -7,7 +7,7 @@ from typing import Optional
 import torch
 from torch.utils.data.sampler import Sampler
 
-from utils import comm
+from tools_det import comm
 
 logger = logging.getLogger(__name__)
 

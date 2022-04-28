@@ -21,7 +21,6 @@ from ..pooler import ROIPooler
 from ..matcher import Matcher
 from ..sampling import subsample_labels, subsample_labels_unknown
 from model.rpn.utils import add_ground_truth_to_proposals
-from .postprocess import fast_rcnn_inference_f
 from layers.wrappers import cat
 # from model.roi_heads.unkown_sample import acquisition_function
 
@@ -286,7 +285,7 @@ class Res5ROIHeads(ROIHeads):
             losses = self.box_predictor.losses(predictions, proposals)
             return [], losses
         else:
-            pred_instances,_, _ = self.box_predictor.inference(predictions, features,proposals)
+            pred_instances, _ = self.box_predictor.inference(predictions,proposals)
             pred_instances = self.forward_with_given_boxes(features, pred_instances)
             return pred_instances, {}
     
@@ -297,35 +296,35 @@ class Res5ROIHeads(ROIHeads):
         assert instances[0].has("pred_boxes") and instances[0].has("pred_classes")
         return instances
     
-    def extract_feature(self,
-            features: Dict[str, torch.Tensor],
-            proposals: List[Instances]):
-        proposal_boxes = [x.proposal_boxes for x in proposals]
-        box_features = self._shared_roi_transform(
-            [features[f] for f in self.in_features], proposal_boxes
-        )
-        predictions = self.box_predictor(box_features.mean(dim=[2, 3]))
+    # def extract_feature(self,
+    #         features: Dict[str, torch.Tensor],
+    #         proposals: List[Instances]):
+    #     proposal_boxes = [x.proposal_boxes for x in proposals]
+    #     box_features = self._shared_roi_transform(
+    #         [features[f] for f in self.in_features], proposal_boxes
+    #     )
+    #     predictions = self.box_predictor(box_features.mean(dim=[2, 3]))
         
-        features= box_features.mean(dim=[2, 3])
-        num_inst_per_image = [len(p) for p in proposals]
-        features = features.split(num_inst_per_image, dim=0)
+    #     features= box_features.mean(dim=[2, 3])
+    #     num_inst_per_image = [len(p) for p in proposals]
+    #     features = features.split(num_inst_per_image, dim=0)
 
-        boxes = self.box_predictor.predict_boxes(predictions, proposals)
-        scores = self.box_predictor.predict_probs(predictions, proposals)
-        image_shapes = [x.image_size for x in proposals]
+    #     boxes = self.box_predictor.predict_boxes(predictions, proposals)
+    #     scores = self.box_predictor.predict_probs(predictions, proposals)
+    #     image_shapes = [x.image_size for x in proposals]
 
-        _,feat,_ =  fast_rcnn_inference_f(
-            boxes,
-            scores,features,
-            image_shapes,
-            self.box_predictor.test_score_thresh,
-            self.box_predictor.test_nms_thresh,
-            self.box_predictor.test_topk_per_image,
-        )
-        res = cat(feat)
-        return res
-        # pred_instances, _ = self.box_predictor.inference(predictions, proposals)
-        # pred_instances = self.forward_with_given_boxes(features, pred_instances)
+    #     _,feat,_ =  fast_rcnn_inference_f(
+    #         boxes,
+    #         scores,features,
+    #         image_shapes,
+    #         self.box_predictor.test_score_thresh,
+    #         self.box_predictor.test_nms_thresh,
+    #         self.box_predictor.test_topk_per_image,
+    #     )
+    #     res = cat(feat)
+    #     return res
+    #     # pred_instances, _ = self.box_predictor.inference(predictions, proposals)
+    #     # pred_instances = self.forward_with_given_boxes(features, pred_instances)
 
 class StandardROIHeads(ROIHeads):
     def __init__(self, cfg, backbone_shape):

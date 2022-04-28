@@ -13,7 +13,7 @@ from iopath.common.file_io import file_lock
 from PIL import Image
 
 from structures.box import Boxes, BoxMode
-from utils.file_io import PathManager
+from tools_det.fileio import PathManager
 
 from data.catalog import DatasetCatalog, MetadataCatalog
 

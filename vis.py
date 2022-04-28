@@ -45,7 +45,7 @@ cfg.INPUT.RANDOM_FLIP = "none"
 cfg.freeze()
 # wandb.init(config=cfg,tags= 'temp',name = 'temp',project='temp')
 
-DIR_NAME = '/data/private/OWOD/datasets/VOC2007'
+DIR_NAME = '/data/jeongeun/OWOD_datasets/VOC2007'
 split = 'train'
 model = GeneralizedRCNN(cfg).to('cuda')
 state_dict = torch.load('./ckpt/uncertainty/1_mdn_17000.pt')

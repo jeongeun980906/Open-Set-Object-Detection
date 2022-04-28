@@ -25,7 +25,7 @@ args = parser.parse_args()
 print(torch.cuda.device_count())
 torch.cuda.set_device(args.gpu)
 print(torch.cuda.current_device())
-DIR_NAME = '/data/private/OWOD/datasets/VOC2007' #'/data/opensets/voc/VOCdevkit/VOC2007'
+DIR_NAME = '/data/jeongeun/OWOD_datasets/VOC2007' #'/data/opensets/voc/VOCdevkit/VOC2007'
 coco_eval = PascalVOCDetectionEvaluator(DIR_NAME,VOC_CLASS_NAMES)
 coco_eval.reset()
 cfg = get_cfg()

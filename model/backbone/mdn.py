@@ -45,26 +45,16 @@ class MixtureOfLogits(nn.Module):
                  in_dim     = 64,   # input feature dimension 
                  y_dim      = 10,   # number of classes 
                  k          = 5,    # number of mixtures
-                 sig_min    = 1, # minimum sigma
-                 sig_max    = 10, # maximum sigma
-                 SHARE_SIG  = True  # share sigma among mixture
                  ):
         super(MixtureOfLogits,self).__init__()
         self.in_dim     = in_dim    # Q
         self.y_dim      = y_dim     # D
         self.k          = k         # K
-        self.sig_min    = sig_min
-        self.sig_max    = sig_max
-        self.SHARE_SIG  = SHARE_SIG
         self.build_graph()
 
     def build_graph(self):
         self.fc_pi      = nn.Linear(self.in_dim,self.k)
         self.fc_mu      = nn.Linear(self.in_dim,self.k*self.y_dim)
-        if self.SHARE_SIG:
-            self.fc_sigma   = nn.Linear(self.in_dim,self.k)
-        else:
-            self.fc_sigma   = nn.Linear(self.in_dim,self.k*self.y_dim)
 
     def forward(self,x):
         """
@@ -74,19 +64,7 @@ class MixtureOfLogits(nn.Module):
         pi              = torch.softmax(pi_logit,dim=1)                 # [N x K]
         mu              = self.fc_mu(x)                                 # [N x KD]
         mu              = torch.reshape(mu,(-1,self.k,self.y_dim))      # [N x K x D]
-        if self.SHARE_SIG:
-            sigma       = self.fc_sigma(x)                              # [N x K]
-            sigma       = sigma.unsqueeze(dim=-1)                       # [N x K x 1]
-            sigma       = sigma.expand_as(mu)                           # [N x K x D]
-        else:
-            sigma       = self.fc_sigma(x)                              # [N x KD]
-        sigma           = torch.reshape(sigma,(-1,self.k,self.y_dim))   # [N x K x D]
-        if self.sig_max is None:
-            sigma = self.sig_min + torch.exp(sigma)                     # [N x K x D]
-        else:
-            sig_range = (self.sig_max-self.sig_min)
-            sigma = self.sig_min + sig_range*torch.sigmoid(sigma)       # [N x K x D]
-        mol_out = {'pi':pi,'mu':mu,'sigma':sigma}
+        mol_out = {'pi':pi,'mu':mu}
         return mol_out
 
     def init_parameters(self):

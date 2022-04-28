@@ -9,7 +9,8 @@ from structures.box import Boxes,pairwise_iou
 from structures.image_list import ImageList
 from structures.instances import Instances
 
-from tools.memory import retry_if_cuda_oom
+import clip
+from tools_det.memory import retry_if_cuda_oom
 from model.rpn.utils import find_top_rpn_proposals
 from ..anchor_generator import build_anchor_generator
 from ..matcher import Matcher,Matcher2
@@ -17,9 +18,11 @@ from ..sampling import subsample_labels
 from ..box_regression import Box2BoxTransform,_dense_box_regression_loss
 from model.rpn.rpn_mdn import RPN_MDN,RPNHead_MDN
 
-from model.ssl_score.score import autolabel
+from model.ssl_score.dino_score import autolabel_dino
+from model.ssl_score.clip_score import autolabel_clip
 from model.ssl_score.preprocess import open_candidate
 from model.ssl_score.append_gt import append_gt
+
 class RPNHead(nn.Module):
     def __init__(self,in_channels,num_anchors,box_dim = 4,conv_dims = (-1,)):
         super().__init__()
@@ -106,7 +109,9 @@ class RPN(nn.Module):
                     loss_weight: Union[float, Dict[str, float]] = 1.0,
                     box_reg_loss_type: str = "smooth_l1",
                     smooth_l1_beta: float = 0.0,
-                    auto_labeling: bool = False,
+                    auto_labeling: bool = False, 
+                    auto_laebl_model_CLIP: bool = False,
+                    auto_label_type :str = 'mul',
                     log: bool = True):
 
         super().__init__()
@@ -130,9 +135,19 @@ class RPN(nn.Module):
         self.smooth_l1_beta = smooth_l1_beta
         self.log = log
         self.auto_labeling  = auto_labeling
+        self.auto_laebl_model_CLIP = auto_laebl_model_CLIP
         if auto_labeling:
-            self.SSL_MODEL = torch.hub.load('facebookresearch/dino:main', 'dino_vits8')
-            self.candidate_set = open_candidate()
+            self.auto_labeling_type = auto_label_type
+            if auto_laebl_model_CLIP:
+                self.MODEL, self.preprocess = clip.load("ViT-B/32")
+                self.candidate_set = clip.tokenize(["a photo of a background", "a photo of a road", "a photo of a parts",
+                            "a photo of an animal",'a photo of fashion accessory','a photo of a vehicle','a photo of traffic sign','a photo of a home appliances',
+                            'a photo of a food','a photo of a sport equipment',
+                            'a photo of a furniture','a photo of office supplies','a photo of electronic', 'a photo of kitchenware'
+                            ])
+            else:
+                self.MODEL = torch.hub.load('facebookresearch/dino:main', 'dino_vits8')
+                self.candidate_set = open_candidate()
             self.auto_label_matcher = Matcher(
                 [0.3, 0.7],[0, -1, 1], allow_low_quality_matches=True)
     def forward(self,
@@ -171,7 +186,13 @@ class RPN(nn.Module):
         )
         if self.auto_labeling:
             with torch.no_grad():
-                label = autolabel(images,proposals,gt_instances,self.auto_label_matcher,self.SSL_MODEL,self.candidate_set)
+                if self.auto_laebl_model_CLIP:
+                    # print('clip')
+                    label = autolabel_clip(images,proposals,gt_instances,self.auto_label_matcher,
+                                    self.MODEL,self.candidate_set)
+                else:
+                    label = autolabel_dino(images,proposals,gt_instances,self.auto_label_matcher
+                                ,self.MODEL,self.candidate_set,score_type = self.auto_labeling_type)
                 gt_instances = append_gt(label,gt_instances)
         if self.training:
             gt_labels, gt_boxes = self.label_and_sample_anchors(anchors, gt_instances)
@@ -364,7 +385,9 @@ def build_proposal_genreator(cfg, input_shape):
                 "loss_rpn_loc": cfg.MODEL.RPN.BBOX_REG_LOSS_WEIGHT * cfg.MODEL.RPN.LOSS_WEIGHT,
             },
         box_reg_loss_type = cfg.MODEL.RPN.BBOX_REG_LOSS_TYPE,
-        smooth_l1_beta = cfg.MODEL.RPN.SMOOTH_L1_BETA , log=cfg.log
+        smooth_l1_beta = cfg.MODEL.RPN.SMOOTH_L1_BETA , log=cfg.log, 
+        auto_labeling=cfg.MODEL.RPN.AUTO_LABEL, auto_label_type = cfg.MODEL.RPN.AUTO_LABEL_TYPE,
+        auto_laebl_model_CLIP= cfg.MODEL.RPN.USE_CLIP
     )
     return RPN(in_features = in_features,
         head = build_rpn_head(cfg, [input_shape[f] for f in in_features]),
@@ -384,5 +407,7 @@ def build_proposal_genreator(cfg, input_shape):
                 "loss_rpn_loc": cfg.MODEL.RPN.BBOX_REG_LOSS_WEIGHT * cfg.MODEL.RPN.LOSS_WEIGHT,
             },
         box_reg_loss_type = cfg.MODEL.RPN.BBOX_REG_LOSS_TYPE,
-        smooth_l1_beta = cfg.MODEL.RPN.SMOOTH_L1_BETA , log=cfg.log, auto_labeling=cfg.MODEL.RPN.AUTO_LABEL
+        smooth_l1_beta = cfg.MODEL.RPN.SMOOTH_L1_BETA , log=cfg.log,
+        auto_labeling=cfg.MODEL.RPN.AUTO_LABEL, auto_label_type = cfg.MODEL.RPN.AUTO_LABEL_TYPE,
+        auto_laebl_model_CLIP=cfg.MODEL.RPN.USE_CLIP
     )
