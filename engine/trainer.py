@@ -50,7 +50,7 @@ class SimpleTrainer():
         self._data_loader_iter = iter(data_loader)
         self.optimizer = optimizer
 
-    def run_step(self):
+    def run_step(self,iter):
         """
         Implement the standard training logic described above.
         """
@@ -65,7 +65,7 @@ class SimpleTrainer():
         """
         If you want to do something with the losses, you can wrap the model.
         """
-        loss_dict = self.model(data)
+        loss_dict = self.model(data,iter)
         if isinstance(loss_dict, torch.Tensor):
             losses = loss_dict
             loss_dict = {"total_loss": loss_dict}

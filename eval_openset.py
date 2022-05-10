@@ -40,13 +40,15 @@ cfg.MODEL.ROI_HEADS.USE_MLN=1-args.base_roi
 cfg.MODEL.RPN.AUTO_LABEL_TYPE = args.af
 cfg.MODEL.ROI_HEADS.UNCT = args.unct
 cfg.MODEL.ROI_HEADS.AF = 'baseline'
+cfg.MODEL.RPN.AUTO_LABEL = False
 
 RPN_NAME = 'mdn' if cfg.MODEL.RPN.USE_MDN else 'base'
 ROI_NAME = 'mln' if cfg.MODEL.ROI_HEADS.USE_MLN else 'base'
 MODEL_NAME = RPN_NAME + ROI_NAME
 
-model = GeneralizedRCNN(cfg).to('cuda')
-state_dict =  torch.load('./ckpt/{}/{}_{}_15000.pt'.format(cfg.MODEL.ROI_HEADS.AF,cfg.MODEL.SAVE_IDX,MODEL_NAME))
+device = 'cuda'
+model = GeneralizedRCNN(cfg,device).to(device)
+state_dict =  torch.load('./ckpt/{}/{}_{}_15000.pt'.format(cfg.MODEL.ROI_HEADS.AF,cfg.MODEL.SAVE_IDX,MODEL_NAME),map_location=device)
 state_dict = {k: v for k, v in state_dict.items() if k in model.state_dict()}
 model.load_state_dict(state_dict)
 model.eval()
@@ -60,7 +62,7 @@ data_loader = build_detection_test_loader(data,mapper=mapper,batch_size=4)
 
 for e, instance in enumerate(data_loader):
     with torch.no_grad():
-        output = model(instance)
+        output = model(instance,1.0)
         coco_eval.process(instance,output)
     # break
     if e%100==0:

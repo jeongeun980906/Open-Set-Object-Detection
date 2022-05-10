@@ -35,5 +35,5 @@ def check_size(gt_boxes):
     temp = torch.cat((ws,hs),dim=-1) # [N x 2]
     min_length = torch.min(temp,dim=-1).values
     max_length = torch.max(temp,dim=-1).values
-    mask = (min_length>30) & (max_length<500)
+    mask = (min_length>50) & (max_length<500)
     return mask

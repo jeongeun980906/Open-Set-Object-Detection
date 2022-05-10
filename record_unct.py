@@ -51,12 +51,12 @@ def GAUSSIAN(cfg, save_id):
     rcnn.eval()
     data = load_voc_instances(DIR_NAME,split,VOC_CLASS_NAMES)
     mapper = DatasetMapper(is_train=True, augmentations=build_augmentation(cfg,True))
-    data_loader = build_detection_train_loader(data,mapper=mapper,total_batch_size=8)
+    data_loader = build_detection_train_loader(data,mapper=mapper,total_batch_size=4)
     record_epis = []
     record_alea = []
     with torch.no_grad():
         for e, batch_in in enumerate(data_loader):
-            batch_out = rcnn(batch_in)
+            batch_out = rcnn(batch_in, 1.0)
             for a in batch_out:
                 epis = a['instances'].epis.cpu().numpy().tolist()
                 alea = a['instances'].alea.cpu().numpy().tolist()
@@ -64,7 +64,7 @@ def GAUSSIAN(cfg, save_id):
                 record_alea.extend(alea)
             if e % 100 ==0:
                 print(e, len(data)/8)
-            if e > 1000:
+            if e > 2000:
                 break
         # record_epis.append(epis.cpu())
 
@@ -106,7 +106,7 @@ def feature_gmm(cfg,save_id):
     rcnn.eval()
     data = load_voc_instances(DIR_NAME,split,VOC_CLASS_NAMES)
     mapper = DatasetMapper(is_train=True, augmentations=build_augmentation(cfg,True))
-    data_loader = build_detection_train_loader(data,mapper=mapper,total_batch_size=8)
+    data_loader = build_detection_train_loader(data,mapper=mapper,total_batch_size=4)
     feats = []
     gmm = GaussianMixture(n_components=21, n_features=2048, mu_init=None, var_init=None, eps=1.e-6)
     with torch.no_grad():
@@ -183,6 +183,7 @@ if __name__ == '__main__':
     cfg.MODEL.ROI_HEADS.USE_MLN=1-args.base_roi
     cfg.MODEL.ROI_HEADS.NUM_CLASSES = 21
     cfg.MODEL.ROI_HEADS.AUTO_LABEL = False
+    cfg.MODEL.RPN.AUTO_LABEL = False
     cfg.log = args.log
     cfg.MODEL.ROI_HEADS.AF = args.af
     cfg.MODEL.ROI_BOX_HEAD.USE_FD = False

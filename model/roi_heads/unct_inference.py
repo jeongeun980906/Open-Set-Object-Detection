@@ -2,7 +2,7 @@ import torch
 import json
 import math
 
-THRES = 0.05
+THRES = 0.1
 LOG_THRES = math.log(0.01)
 
 def filter_unct(pred_classes,unct,path=None,device='cuda'):

@@ -65,7 +65,7 @@ def main(cfg, phase,args):
     print('data size: ',len(data))
     for i in range(cfg.SOLVER.MAX_ITER):
         # print(i)
-        trainer.run_step()
+        trainer.run_step(i/cfg.SOLVER.MAX_ITER)
         schedular.step()
         if i%500 == 0:
             print(i)

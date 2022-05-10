@@ -119,7 +119,7 @@ class RPN_MDN(nn.Module):
     def forward(self,
             images: ImageList,
             features: Dict[str, torch.Tensor],
-            gt_instances: Optional[List[Instances]] = None):
+            gt_instances: Optional[List[Instances]] = None, step=None):
         '''
         Args:
             images

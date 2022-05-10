@@ -39,6 +39,7 @@ VOC_CLASS_NAMES_COCOFIED = [
         "airplane", "dining table", "motorcycle",
         "potted plant", "couch", "tv"
     ]
+    
 BASE_VOC_CLASS_NAMES = [
         "aeroplane", "diningtable", "motorbike",
         "pottedplant", "sofa", "tvmonitor"

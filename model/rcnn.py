@@ -35,14 +35,14 @@ class GeneralizedRCNN(nn.Module):
         self.ssl = torch.hub.load('facebookresearch/dino:main', 'dino_vits8').to(self.device_vit)
         self.use_ssl = True
 
-    def forward(self,batched_inputs: List[Dict[str, torch.Tensor]]):
+    def forward(self,batched_inputs: List[Dict[str, torch.Tensor]], step):
         if not self.training:
             return self.inference(batched_inputs)
         images = self.preprocess_image(batched_inputs)
         features = self.backbone(images.tensor)
         gt_instances = [x['instances'].to(self.device) for x in batched_inputs]
         if self.auto_label_all:
-            proposals, proposal_losses,gt_instances = self.proposal_generator(images, features, gt_instances)
+            proposals, proposal_losses,gt_instances = self.proposal_generator(images, features, gt_instances,step)
         else:
             proposals, proposal_losses = self.proposal_generator(images, features, gt_instances)
         _, detector_losses = self.roi_heads(images, features, proposals, gt_instances)

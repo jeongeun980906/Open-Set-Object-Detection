@@ -19,7 +19,7 @@ TF = tf.Compose([
             ])
 
 TF_CLIP = tf.Compose([
-                tf.Resize((224,224), interpolation=tf.InterpolationMode.BICUBIC),
+                tf.Resize(224,interpolation=tf.InterpolationMode.BICUBIC),
                 tf.CenterCrop(224),
                 tf.Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711)),
             ])
@@ -64,11 +64,12 @@ def preprocess(image:torch.tensor,boxes:torch.tensor,gt_boxes:torch.tensor,CLIP=
         # plt.figure()
         # plt.imshow(demo)
         # plt.savefig('./dummy/proposals/crop.png')
-        
-        crop_image = F.pad(input=crop_image,pad = pad)/255
+        # print(crop_image.max())
         if CLIP:
+            crop_image = F.pad(input=crop_image,pad = pad)/255
             crop_image = TF_CLIP(crop_image)
         else:
+            crop_image = F.pad(input=crop_image,pad = pad)/255
             crop_image = TF(crop_image)
         res.append(crop_image.unsqueeze(0))
     # print(res)
