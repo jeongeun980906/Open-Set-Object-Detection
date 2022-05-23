@@ -141,7 +141,7 @@ class RPN(nn.Module):
             self.auto_labeling_type = auto_label_type
             if auto_laebl_model_CLIP:
                 self.MODEL, self.preprocess = clip.load("ViT-B/32")
-                self.candidate_set = clip.tokenize(["a photo of a background", "a photo of a road scene",  "a photo of a house scene",
+                self.candidate_set = clip.tokenize(["a photo of a background", "a photo of a road scene", "a photo of a pattern" ,"a photo of a house scene",
                             "a photo of an animal",'a photo of fashion accessory','a photo of a transport','a photo of traffic sign','a photo of a home appliances',
                             'a photo of a food','a photo of a sport equipment',
                             'a photo of a furniture','a photo of office supplies','a photo of electronic', 'a photo of kitchenware'

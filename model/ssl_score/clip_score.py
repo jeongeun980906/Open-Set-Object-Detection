@@ -22,7 +22,7 @@ def autolabel_clip(images:ImageList,proposals:List[Instances],
                 gt_instances:List[Instances],anchor_matcher,
                 model: torch.nn.Module,text:torch.Tensor, step):
     res = []
-    thres = 0.9 # 0.9 # 
+    thres = 1.2 #1.7
     for image,proposal,gt in zip(images,proposals,gt_instances):
         boxes = proposal.proposal_boxes
         gt_boxes = gt.gt_boxes
@@ -38,8 +38,8 @@ def autolabel_clip(images:ImageList,proposals:List[Instances],
         boxes = boxes.tensor[index_candidate,:]
         score = proposal.objectness_logits[index_candidate]
         gt_boxes = gt_boxes.tensor
-        if score.shape[0]>int((1-step)*4)*50+50: # 50
-            top_score, top_index = torch.topk(score,k=int((1-step)*4)*50+50)
+        if score.shape[0]>int((1-step)*4)*50+50:
+            top_score, top_index = torch.topk(score,k=int((1-step)*4)*50+50) # 
             top_boxes = boxes[top_index,:]
         else:
             top_score = score
@@ -49,15 +49,15 @@ def autolabel_clip(images:ImageList,proposals:List[Instances],
         device = top_score.device
         device_vit = next(model.parameters()).device
         ssl_score, cate = compute_score(patches,model,text,device,device_vit)
-
+        ssl_score += 0.5*torch.sigmoid(top_score).clone()
         # keep = batched_nms(top_boxes,ssl_score,cate,0.1)
         keep = nms(top_boxes,ssl_score,0.1)
         ssl_score = ssl_score[keep]
         top_boxes = top_boxes[keep]
         top_score = top_score[keep]
         # print(torch.mean(ssl_score),ssl_score.shape)
-        if ssl_score.shape[0]>int(step*1)+1: # 3
-            k=int(step*1)+1
+        if ssl_score.shape[0]>int(step*3)+1: # 3
+            k=int(step*3)+1
         else:
             k = ssl_score.shape[0]
         s, auto_label_index = torch.topk(ssl_score,k=k)
@@ -82,9 +82,9 @@ def compute_score(patches,model,text,device,device_vit):
     for i in range(patch_size//batch_size):
         input = patches[i*batch_size:(i+1)*batch_size] 
         logits_per_image, logits_per_text = model(input.to(device_vit), text.to(device_vit))
-        probs = (logits_per_image/2).softmax(dim=-1).to(device)
+        probs = (logits_per_image/5).softmax(dim=-1).to(device)
         _ , cat = torch.max(probs,dim=-1)
-        bg_probs = probs[:,0] + probs[:,1] + probs[:,2]
+        bg_probs = probs[:,0] + probs[:,1] + probs[:,2] + probs[:,3]
         scores[i*batch_size:(i+1)*batch_size] = bg_probs
         category[i*batch_size:(i+1)*batch_size] = cat
         # print(cat)

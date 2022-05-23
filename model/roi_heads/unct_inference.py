@@ -5,7 +5,7 @@ import math
 THRES = 0.1
 LOG_THRES = math.log(0.01)
 
-def filter_unct(pred_classes,unct,path=None,device='cuda'):
+def filter_unct(pred_classes,unct,scores,path=None,device='cuda'):
     with open(path,'r') as jf:
         data = json.load(jf)
     mean = data['epis_mean'] + data['alea_mean'] 
@@ -14,8 +14,9 @@ def filter_unct(pred_classes,unct,path=None,device='cuda'):
     cdf = 1-dist.cdf(unct)
     change_indx = torch.where(cdf<THRES)[0]
     pred_classes[change_indx] = 20
+    scores[change_indx] = 1.0
     # print(change_indx)
-    return pred_classes
+    return pred_classes,scores
 
 
 def filter_fd(pred_classes, log_prob):

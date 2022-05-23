@@ -154,6 +154,10 @@ def fast_rcnn_inference_single_image(
     scores = scores[filter_mask]
     epis = epis[filter_inds[:, 0]]
     alea = alea[filter_inds[:, 0]]
+    unct = epis+alea
+
+    if path is not None:
+        filter_inds[:, 1],scores = filter_unct(filter_inds[:, 1],unct,scores,path,unct.device)
     
     # 2. Apply NMS for each class independently.
     keep = batched_nms(boxes, scores, filter_inds[:, 1], nms_thresh)
@@ -162,8 +166,9 @@ def fast_rcnn_inference_single_image(
     boxes, scores, filter_inds = boxes[keep], scores[keep], filter_inds[keep]
     epis , alea = epis[keep], alea[keep]
     unct = epis + alea
-    if path is not None:
-        filter_inds[:, 1] = filter_unct(filter_inds[:, 1],unct,path,unct.device)
+    
+    # if path is not None:
+    #     filter_inds[:, 1] = filter_unct(filter_inds[:, 1],unct,path,unct.device)
     
     pred_classes = filter_inds[:, 1]
     result = Instances(image_shape)

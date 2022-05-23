@@ -61,9 +61,6 @@ RPN_NAME = 'mdn' if cfg.MODEL.RPN.USE_MDN else 'base'
 ROI_NAME = 'mln' if cfg.MODEL.ROI_HEADS.USE_MLN else 'base'
 MODEL_NAME = RPN_NAME + ROI_NAME
 
-torch.cuda.set_device(1)
-print(torch.cuda.current_device())
-
 data = load_voc_instances(DIR_NAME,'test',VOC_CLASS_NAMES,phase=None,COCO_CLASS=True)
 # data = data[::100]
 # print(len(data))
@@ -74,8 +71,8 @@ data_loader = build_detection_test_loader(data,mapper=mapper,batch_size=4)
 # referenec_set = open_candidate()[0].to('cuda')
 # vit = torch.hub.load('facebookresearch/dino:main', 'dino_vits8').to(device_vit)
 
-model = GeneralizedRCNN(cfg).to('cuda')
-state_dict =  torch.load('./ckpt/{}/{}_{}_15000.pt'.format(cfg.MODEL.ROI_HEADS.AF,cfg.MODEL.SAVE_IDX,MODEL_NAME))
+model = GeneralizedRCNN(cfg,'cuda').to('cuda')
+state_dict =  torch.load('./ckpt/{}/{}_{}_15000.pt'.format(cfg.MODEL.ROI_HEADS.AF,cfg.MODEL.SAVE_IDX,MODEL_NAME),map_location='cuda')
 state_dict = {k: v for k, v in state_dict.items() if k in model.state_dict()}
 model.load_state_dict(state_dict)
 model.eval()

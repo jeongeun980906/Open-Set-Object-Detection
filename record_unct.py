@@ -58,8 +58,10 @@ def GAUSSIAN(cfg, save_id):
         for e, batch_in in enumerate(data_loader):
             batch_out = rcnn(batch_in, 1.0)
             for a in batch_out:
-                epis = a['instances'].epis.cpu().numpy().tolist()
-                alea = a['instances'].alea.cpu().numpy().tolist()
+                pred_classes = a['instances'].pred_classes
+                index = torch.where(pred_classes<20)
+                epis = a['instances'].epis[index].cpu().numpy().tolist()
+                alea = a['instances'].alea[index].cpu().numpy().tolist()
                 record_epis.extend(epis)
                 record_alea.extend(alea)
             if e % 100 ==0:
