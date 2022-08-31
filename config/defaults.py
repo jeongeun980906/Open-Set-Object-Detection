@@ -25,6 +25,7 @@ _C = CN()
 # changes happen. It's recommended to keep a VERSION in your config file.
 _C.VERSION = 2
 _C.log=True
+_C.phase = 'all'
 _C.gpu_vit = 'cuda:1'
 _C.PATH = '.'
 _C.MODEL = CN()
@@ -199,9 +200,9 @@ _C.MODEL.ANCHOR_GENERATOR.OFFSET = 0.0
 # RPN options
 # ---------------------------------------------------------------------------- #
 _C.MODEL.RPN = CN()
-_C.MODEL.RPN.USE_MDN = False
+
 _C.MODEL.RPN.AUTO_LABEL = False
-_C.MODEL.RPN.USE_CLIP = False
+_C.MODEL.RPN.AUTO_LABEL_TYPE = 'base' # or 'sum'
 
 _C.MODEL.RPN.HEAD_NAME = "StandardRPNHead"  # used by RPN_HEAD_REGISTRY
 
@@ -255,12 +256,8 @@ _C.MODEL.RPN.CONV_DIMS = [-1]
 # ---------------------------------------------------------------------------- #
 _C.MODEL.ROI_HEADS = CN()
 
-_C.MODEL.ROI_HEADS.AUTO_LABEL = False
-_C.MODEL.ROI_HEADS.AUTO_LABEL_TYPE = 'mul'
-_C.MODEL.ROI_HEADS.AF = 'baseline'
 _C.MODEL.ROI_HEADS.USE_MLN = False
 _C.MODEL.ROI_HEADS.UNCT = False
-
 
 _C.MODEL.ROI_HEADS.NAME = "Res5ROIHeads"
 # Number of foreground classes

@@ -26,7 +26,7 @@ from tools_det.memory import retry_if_cuda_oom
 from model.sampling import subsample_labels
 
 from model.ssl_score.preprocess import preprocess,open_candidate
-from model.ssl_score.dino_score import cosine_distance_torch,save_images
+
 import random
 
 cfg = get_cfg()

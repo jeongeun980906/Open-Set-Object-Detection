@@ -45,10 +45,7 @@ class ROIHeads(torch.nn.Module):
                 allow_low_quality_matches=False,
             )
         self.proposal_append_gt = True
-        self.auto_labeling = cfg.MODEL.ROI_HEADS.AUTO_LABEL
         self.auto_labeling_rpn = cfg.MODEL.RPN.AUTO_LABEL
-        self.AF_TYPE = cfg.MODEL.ROI_HEADS.AF
-        self.MDN = cfg.MODEL.RPN.USE_MDN
 
     def _sample_proposals(self,matched_idxs: torch.Tensor, matched_labels: torch.Tensor, gt_classes: torch.Tensor
                      ,proposal: torch.Tensor = None,) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -70,18 +67,11 @@ class ROIHeads(torch.nn.Module):
             gt_classes[matched_labels == -1] = -1
         else:
             gt_classes = torch.zeros_like(matched_idxs) + self.num_classes
-        if self.auto_labeling:
-            sampled_fg_idxs, sampled_bg_idxs , sampled_ukn_idxs = subsample_labels_unknown(
-            gt_classes, self.batch_size_per_image, proposal,
-                     self.positive_fraction, self.num_classes, 2, self.AF_TYPE)
-            gt_classes[sampled_ukn_idxs] = self.num_classes - 1
-            sampled_idxs = torch.cat([sampled_fg_idxs, sampled_bg_idxs,sampled_ukn_idxs], dim=0)
-        
-        else:
-            sampled_fg_idxs, sampled_bg_idxs = subsample_labels(
-            gt_classes, self.batch_size_per_image, self.positive_fraction, self.num_classes
-                    )
-            sampled_idxs = torch.cat([sampled_fg_idxs, sampled_bg_idxs], dim=0)
+
+        sampled_fg_idxs, sampled_bg_idxs = subsample_labels(
+        gt_classes, self.batch_size_per_image, self.positive_fraction, self.num_classes
+                )
+        sampled_idxs = torch.cat([sampled_fg_idxs, sampled_bg_idxs], dim=0)
         # gt_classes_ss = gt_classes[sampled_idxs]
         # if self.auto_labeling:
         #     objectness_logits = proposal.objectness_logits

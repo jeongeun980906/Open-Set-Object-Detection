@@ -20,9 +20,10 @@ PIXEL_STD = torch.tensor([0.26862954, 0.26130258, 0.27577711]).view(-1,1,1)
 
 def autolabel_clip(images:ImageList,proposals:List[Instances],
                 gt_instances:List[Instances],anchor_matcher,
-                model: torch.nn.Module,text:torch.Tensor, step):
+                model: torch.nn.Module,text:torch.Tensor,
+                num_neg=4,step=1,auto_labeling_type='base'):
     res = []
-    thres = 1.2 #1.7
+    thres = 0.9 #1.2 #1.7
     for image,proposal,gt in zip(images,proposals,gt_instances):
         boxes = proposal.proposal_boxes
         gt_boxes = gt.gt_boxes
@@ -48,8 +49,10 @@ def autolabel_clip(images:ImageList,proposals:List[Instances],
         patches = preprocess(image,top_boxes,gt_boxes,CLIP=True)
         device = top_score.device
         device_vit = next(model.parameters()).device
-        ssl_score, cate = compute_score(patches,model,text,device,device_vit)
-        ssl_score += 0.5*torch.sigmoid(top_score).clone()
+        ssl_score, cate = compute_score(patches,model,text,device,device_vit,num_neg)
+        if auto_labeling_type == 'sum':
+            ssl_score += 0.5*torch.sigmoid(top_score).clone()
+            thres = 1.2
         # keep = batched_nms(top_boxes,ssl_score,cate,0.1)
         keep = nms(top_boxes,ssl_score,0.1)
         ssl_score = ssl_score[keep]
@@ -74,7 +77,7 @@ def autolabel_clip(images:ImageList,proposals:List[Instances],
     return res
 
 
-def compute_score(patches,model,text,device,device_vit):
+def compute_score(patches,model,text,num_neg,device,device_vit):
     batch_size = 50
     patch_size = patches.shape[0]
     scores = torch.zeros(patch_size).to(device)
@@ -82,9 +85,9 @@ def compute_score(patches,model,text,device,device_vit):
     for i in range(patch_size//batch_size):
         input = patches[i*batch_size:(i+1)*batch_size] 
         logits_per_image, logits_per_text = model(input.to(device_vit), text.to(device_vit))
-        probs = (logits_per_image/5).softmax(dim=-1).to(device)
+        probs = (logits_per_image/2).softmax(dim=-1).to(device) # T = 5
         _ , cat = torch.max(probs,dim=-1)
-        bg_probs = probs[:,0] + probs[:,1] + probs[:,2] + probs[:,3]
+        bg_probs = torch.sum(probs[:,:num_neg],axis=-1)
         scores[i*batch_size:(i+1)*batch_size] = bg_probs
         category[i*batch_size:(i+1)*batch_size] = cat
         # print(cat)

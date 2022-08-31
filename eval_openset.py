@@ -18,11 +18,9 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--id', type=int,default=1,help='save index')
 parser.add_argument('--gpu', type=int,default=0,help='gpu index')
 parser.add_argument('--gpu_vit', type=int,default=1,help='gpu index')
-parser.add_argument('--af', type=str,default='mul',help='acquisition function',
-            choices=["sum", "mul"])
-parser.add_argument('--base_rpn', action='store_true', default=False,help='use mdn for RPN')
+
 parser.add_argument('--base_roi', action='store_true', default=False,help='use mln for ROIHEAD')
-parser.add_argument('--unct', action='store_true', default=False,help='use mln unct else DINO')
+
 args = parser.parse_args()
 
 print(torch.cuda.device_count())
@@ -35,25 +33,20 @@ cfg = get_cfg()
 cfg.MODEL.SAVE_IDX = args.id
 cfg.MODEL.ROI_HEADS.NUM_CLASSES  = 20 +1
 cfg.MODEL.ROI_BOX_HEAD.USE_FD = False
-cfg.MODEL.RPN.USE_MDN=1-args.base_rpn
 cfg.MODEL.ROI_HEADS.USE_MLN=1-args.base_roi
-cfg.MODEL.RPN.AUTO_LABEL_TYPE = args.af
-cfg.MODEL.ROI_HEADS.UNCT = args.unct
-cfg.MODEL.ROI_HEADS.AF = 'baseline'
+cfg.MODEL.ROI_HEADS.UNCT = True
 cfg.MODEL.RPN.AUTO_LABEL = False
 
-RPN_NAME = 'mdn' if cfg.MODEL.RPN.USE_MDN else 'base'
+RPN_NAME = 'base'
 ROI_NAME = 'mln' if cfg.MODEL.ROI_HEADS.USE_MLN else 'base'
 MODEL_NAME = RPN_NAME + ROI_NAME
 
 device = 'cuda'
 model = GeneralizedRCNN(cfg,device).to(device)
-state_dict =  torch.load('./ckpt/{}/{}_{}_15000.pt'.format(cfg.MODEL.ROI_HEADS.AF,cfg.MODEL.SAVE_IDX,MODEL_NAME),map_location=device)
+state_dict =  torch.load('./ckpt/baseline/{}_{}_15000.pt'.format(cfg.MODEL.SAVE_IDX,MODEL_NAME),map_location=device)
 state_dict = {k: v for k, v in state_dict.items() if k in model.state_dict()}
 model.load_state_dict(state_dict)
 model.eval()
-if not args.unct:
-    model.load_ssl(args.gpu_vit)
 
 data = load_voc_instances(DIR_NAME,'test',VOC_CLASS_NAMES,phase=None,COCO_CLASS=True)#[::100]
 print(len(data))

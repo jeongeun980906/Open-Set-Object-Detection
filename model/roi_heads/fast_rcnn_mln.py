@@ -218,14 +218,14 @@ class FastRCNNOutputLayers_MLN(nn.Module):
             loss_weight = {"loss_cls": loss_weight, "loss_box_reg": loss_weight}
         self.loss_weight = loss_weight
         self.log = cfg.log
-        self.auto_labeling = cfg.MODEL.ROI_HEADS.AUTO_LABEL
-        self.rpn_auto_labeling = cfg.MODEL.RPN.AUTO_LABEL
 
-        RPN_NAME = 'mdn' if cfg.MODEL.RPN.USE_MDN else 'base'
+        self.auto_labeling = cfg.MODEL.RPN.AUTO_LABEL
+
+        RPN_NAME = 'base'
         ROI_NAME = 'mln' if cfg.MODEL.ROI_HEADS.USE_MLN else 'base'
         MODEL_NAME = RPN_NAME + ROI_NAME
         if cfg.MODEL.ROI_HEADS.UNCT:
-            self.path = '{}/ckpt/{}/{}_{}.json'.format(cfg.PATH,cfg.MODEL.ROI_HEADS.AF,cfg.MODEL.SAVE_IDX,MODEL_NAME)
+            self.path = '{}/ckpt/baseline/{}_{}.json'.format(cfg.PATH,cfg.MODEL.SAVE_IDX,MODEL_NAME)
         else:
             self.path = None
     def forward(self, x):
@@ -261,7 +261,7 @@ class FastRCNNOutputLayers_MLN(nn.Module):
         gt_classes = (
             cat([p.gt_classes for p in proposals], dim=0) if len(proposals) else torch.empty(0)
         )
-        _log_classification_stats(gather_scores, gt_classes,self.log,self.auto_labeling+self.rpn_auto_labeling)
+        _log_classification_stats(gather_scores, gt_classes,self.log,self.auto_labeling)
         # parse box regression outputs
         if len(proposals):
             proposal_boxes = cat([p.proposal_boxes.tensor for p in proposals], dim=0)  # Nx4
