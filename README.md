@@ -3,4 +3,4 @@
 python setup.py install
 
 Checkpoints are from 
-https://drive.google.com/drive/folders/1Uo6MuQ_Mkz1Si8R1d5RWqd00iZyNk_JV?usp=sharing
+[Here](https://drive.google.com/drive/folders/1_fOlX6J7vO8ZnUgnWcy_As4cwZJKS7Qc?usp=sharing)
